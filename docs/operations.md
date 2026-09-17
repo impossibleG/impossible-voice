@@ -52,3 +52,13 @@ process, engine, and contract status. Detailed examples are in [`api.md`](api.md
 
 The service is local-only by design. If another machine must reach it, place an authenticated,
 TLS-terminating reverse proxy in front instead of weakening the loopback guard.
+
+## Release smoke
+
+With a verified artifact store and the server running, the bounded PowerShell smoke synthesizes a
+WAV over HTTP, transcribes it over HTTP and realtime WebSocket, and negotiates MCP. Generated audio
+stays under the ignored `.shame` directory.
+
+```powershell
+./scripts/smoke-public.ps1
+```

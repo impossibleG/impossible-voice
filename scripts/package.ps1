@@ -50,7 +50,7 @@ Copy-Item -LiteralPath $binary -Destination (Join-Path $stage $binaryName)
 foreach ($name in @('README.md', 'NOTICE.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE-MIT', 'LICENSE-APACHE')) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) -Destination (Join-Path $stage $name)
 }
-foreach ($name in @('setup.ps1', 'serve.ps1', 'setup.sh', 'serve.sh')) {
+foreach ($name in @('setup.ps1', 'serve.ps1', 'setup.sh', 'serve.sh', 'smoke-public.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $stage 'scripts' $name)
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'config/impossible-voice.example.toml') -Destination (Join-Path $stage 'config/impossible-voice.example.toml')
