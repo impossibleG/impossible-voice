@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.ps1 text eol=lf
+*.sh text eol=lf
+vendor/impossible-server/** -text whitespace=-blank-at-eof
+vendor/impossible-server/source-sync.json text eol=crlf whitespace=cr-at-eol,-blank-at-eof

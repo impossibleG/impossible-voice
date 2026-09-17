@@ -5,6 +5,7 @@
 .agents
 .codex
 target
+**/target
 dist
 models
 runtimes

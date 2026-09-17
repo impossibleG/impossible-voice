@@ -19,7 +19,15 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 pwsh ./scripts/test-privacy-scan.ps1
 pwsh ./scripts/privacy-scan.ps1
+pwsh ./scripts/verify-vendored-impossible-server.ps1
+pwsh ./scripts/test-vendored-impossible-server.ps1
+cargo test --locked --manifest-path vendor/impossible-server/Cargo.toml --target-dir target/foundation
 ```
+
+The vendored foundation is a deliberately narrow, integrity-checked snapshot of the reusable core
+and testkit. It supplies lifecycle and safety primitives; it does not supply Voice transports,
+WebSockets, audio processing, inference engines, or artifact installation. See
+[`docs/foundation-vendoring.md`](docs/foundation-vendoring.md).
 
 ## License
 
