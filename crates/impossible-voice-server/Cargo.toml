@@ -10,10 +10,18 @@ name = "impossible-voice"
 path = "src/main.rs"
 
 [dependencies]
+axum.workspace = true
+clap.workspace = true
 impossible-server-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+toml.workspace = true
 
 [dev-dependencies]
+http-body-util.workspace = true
 impossible-server-testkit.workspace = true
+tower.workspace = true
 
 [lints]
 workspace = true

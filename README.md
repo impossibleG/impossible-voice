@@ -7,6 +7,18 @@ checksum-verified installation and offline operation after setup.
 The public v0.1 promise is frozen in [`docs/product-contract.md`](docs/product-contract.md). The
 implementation is under active development and is not yet a release.
 
+The control plane is runnable while voice engines are being integrated:
+
+```text
+cargo run --locked --bin impossible-voice -- doctor
+cargo run --locked --bin impossible-voice -- serve
+```
+
+`serve` binds to `127.0.0.1:8080` by default. Configuration precedence is defaults, then an
+optional TOML file, then `IMPOSSIBLE_VOICE_*` environment variables, then explicit CLI flags.
+See [`config/impossible-voice.example.toml`](config/impossible-voice.example.toml). Readiness
+remains false until the curated artifacts and both engines are usable.
+
 ## Development
 
 The repository is a Rust workspace. The current tree establishes the public contract and crate

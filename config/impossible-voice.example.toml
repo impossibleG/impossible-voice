@@ -1,0 +1,7 @@
+# Defaults are shown explicitly. CLI flags override environment variables, which override this file.
+bind = "127.0.0.1:8080"
+max_request_bytes = 16777216
+queue_capacity = 128
+max_concurrent_requests = 4
+request_timeout_ms = 60000
+shutdown_timeout_ms = 10000
