@@ -251,7 +251,10 @@ impl SttEngine {
             vad: EnergyVad::new(self.vad, ENGINE_SAMPLE_RATE).map_err(|_| SttError::Audio)?,
             context,
             max_chunk_bytes: self.limits.max_chunk_bytes,
+            residual: Vec::with_capacity(VAD_FRAME_SAMPLES),
             last_interim: String::new(),
+            last_final: None,
+            current_has_audio: false,
             finished: false,
             _permit: permit,
         })
@@ -267,7 +270,10 @@ pub struct StreamingSession {
     vad: EnergyVad,
     context: RequestContext,
     max_chunk_bytes: usize,
+    residual: Vec<f32>,
     last_interim: String,
+    last_final: Option<String>,
+    current_has_audio: bool,
     finished: bool,
     _permit: Permit,
 }
@@ -299,19 +305,25 @@ impl StreamingSession {
             return Ok(Vec::new());
         }
         let converted = self.resampler.push(&decoded).map_err(|_| SttError::Audio)?;
+        self.residual.extend_from_slice(&converted);
+        let complete = (self.residual.len() / VAD_FRAME_SAMPLES) * VAD_FRAME_SAMPLES;
+        let frames = self.residual.drain(..complete).collect::<Vec<_>>();
         let mut updates = Vec::new();
-        for frame in converted.chunks(VAD_FRAME_SAMPLES) {
+        for frame in frames.chunks_exact(VAD_FRAME_SAMPLES) {
             ensure_active(&self.context)?;
             self.stream.accept(frame)?;
+            self.current_has_audio = true;
             let transition = self.vad.process(frame).map_err(|_| SttError::Audio)?;
             if transition == VadEvent::Ended {
                 let text = self.stream.finish()?;
                 ensure_active(&self.context)?;
+                self.last_final = Some(text.clone());
                 updates.push(Transcript {
                     kind: TranscriptKind::Final,
                     text,
                 });
                 self.stream = self.backend.stream()?;
+                self.current_has_audio = false;
                 self.last_interim.clear();
             } else {
                 let text = self.stream.interim()?;
@@ -338,8 +350,20 @@ impl StreamingSession {
         }
         ensure_active(&self.context)?;
         self.decoder.finish().map_err(|_| SttError::Audio)?;
+        if !self.residual.is_empty() {
+            self.stream.accept(&self.residual)?;
+            self.current_has_audio = true;
+            self.vad
+                .process(&self.residual)
+                .map_err(|_| SttError::Audio)?;
+            self.residual.clear();
+        }
         self.finished = true;
-        let text = self.stream.finish()?;
+        let text = if self.current_has_audio {
+            self.stream.finish()?
+        } else {
+            self.last_final.take().ok_or(SttError::Audio)?
+        };
         ensure_active(&self.context)?;
         Ok(Transcript {
             kind: TranscriptKind::Final,
@@ -459,13 +483,51 @@ mod tests {
                 .any(|update| update.kind == TranscriptKind::Interim)
         );
         let updates = session.push_pcm16(&silence)?;
-        assert!(
-            updates
-                .iter()
-                .any(|update| update.kind == TranscriptKind::Final)
-        );
-        assert_eq!(session.finish()?.kind, TranscriptKind::Final);
+        let vad_final = updates
+            .iter()
+            .find(|update| update.kind == TranscriptKind::Final)
+            .ok_or("missing VAD final")?;
+        assert_eq!(vad_final.text, "final-640");
+        let explicit_final = session.finish()?;
+        assert_eq!(explicit_final.kind, TranscriptKind::Final);
+        assert_eq!(explicit_final.text, vad_final.text);
+        assert_ne!(explicit_final.text, "final-0");
         Ok(())
+    }
+
+    #[test]
+    fn streaming_results_are_invariant_to_transport_chunk_splits() -> Result<(), Box<dyn Error>> {
+        let pcm = [
+            vec![2_000_i16; VAD_FRAME_SAMPLES],
+            vec![0_i16; VAD_FRAME_SAMPLES],
+        ]
+        .concat()
+        .into_iter()
+        .flat_map(i16::to_le_bytes)
+        .collect::<Vec<_>>();
+        let contiguous = run_stream(&pcm, &[pcm.len()])?;
+        let fragmented = run_stream(&pcm, &[1, 3, 17, 129, 5, 511, 7])?;
+        assert_eq!(fragmented, contiguous);
+        Ok(())
+    }
+
+    fn run_stream(
+        pcm: &[u8],
+        chunk_sizes: &[usize],
+    ) -> Result<(Vec<Transcript>, Transcript), Box<dyn Error>> {
+        let engine = engine(1)?;
+        let mut session = engine.start_stream(16_000, context(CancellationToken::new())?)?;
+        let mut updates = Vec::new();
+        let mut offset = 0;
+        let mut index = 0;
+        while offset < pcm.len() {
+            let size = chunk_sizes[index % chunk_sizes.len()].min(pcm.len() - offset);
+            updates.extend(session.push_pcm16(&pcm[offset..offset + size])?);
+            offset += size;
+            index += 1;
+        }
+        let final_result = session.finish()?;
+        Ok((updates, final_result))
     }
 
     #[test]
