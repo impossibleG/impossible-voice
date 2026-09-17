@@ -508,7 +508,26 @@ async fn enforce_workload_policy(
 
 async fn normalize_public_failures(request: Request, next: Next) -> Response {
     let response = next.run(request).await;
-    match response.status() {
+    let is_json = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+    if is_json {
+        return response;
+    }
+    let request_id = response.headers().get("x-request-id").cloned();
+    let mut normalized = match response.status() {
+        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => public_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "the request could not be decoded",
+        ),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => public_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "invalid_request",
+            "the request media type is unsupported",
+        ),
         StatusCode::METHOD_NOT_ALLOWED => public_error(
             StatusCode::METHOD_NOT_ALLOWED,
             "invalid_request",
@@ -519,8 +538,12 @@ async fn normalize_public_failures(request: Request, next: Next) -> Response {
             "invalid_request",
             "the request body exceeds the configured limit",
         ),
-        _ => response,
+        _ => return response,
+    };
+    if let Some(request_id) = request_id {
+        normalized.headers_mut().insert("x-request-id", request_id);
     }
+    normalized
 }
 
 async fn not_found() -> Response {
@@ -559,24 +582,33 @@ async fn version(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
 
 async fn capabilities(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     state.metrics.increment();
+    let ready = state.health.snapshot().ready;
     Json(serde_json::json!({
-        "speech_to_text": true,
-        "text_to_speech": true,
-        "realtime_websocket": true,
-        "grpc": true,
-        "mcp": true,
+        "ready": ready,
+        "speech_to_text": ready,
+        "text_to_speech": ready,
+        "realtime_websocket": ready,
+        "grpc": ready,
+        "mcp": ready,
         "offline_after_setup": true
     }))
 }
 
 async fn models(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     state.metrics.increment();
+    let ready = state.health.snapshot().ready;
+    let data = if ready {
+        serde_json::json!([
+            { "id": "impossible-voice-stt", "object": "model", "owned_by": "local", "status": "ready" },
+            { "id": "impossible-voice-tts", "object": "model", "owned_by": "local", "voice": "kristin", "status": "ready" }
+        ])
+    } else {
+        serde_json::json!([])
+    };
     Json(serde_json::json!({
         "object": "list",
-        "data": [
-            { "id": "impossible-voice-stt", "object": "model", "owned_by": "local" },
-            { "id": "impossible-voice-tts", "object": "model", "owned_by": "local", "voice": "kristin" }
-        ]
+        "ready": ready,
+        "data": data
     }))
 }
 
@@ -693,6 +725,34 @@ mod tests {
         assert!(
             String::from_utf8(body.to_vec())?.contains("impossible_voice_control_requests_total")
         );
+
+        let capabilities = server
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/capabilities")
+                    .body(Body::empty())?,
+            )
+            .await?
+            .into_body()
+            .collect()
+            .await?
+            .to_bytes();
+        let capabilities: serde_json::Value = serde_json::from_slice(&capabilities)?;
+        assert_eq!(capabilities["ready"], false);
+        assert_eq!(capabilities["speech_to_text"], false);
+
+        let models = server
+            .router()
+            .oneshot(Request::builder().uri("/v1/models").body(Body::empty())?)
+            .await?
+            .into_body()
+            .collect()
+            .await?
+            .to_bytes();
+        let models: serde_json::Value = serde_json::from_slice(&models)?;
+        assert_eq!(models["ready"], false);
+        assert_eq!(models["data"].as_array().map(Vec::len), Some(0));
         Ok(())
     }
 

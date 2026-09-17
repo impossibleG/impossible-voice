@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Json, Router,
+    body::Bytes,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -62,8 +63,16 @@ struct JsonRpcError {
 async fn handle(
     State(state): State<McpState>,
     Extension(context): Extension<RequestContext>,
-    Json(request): Json<JsonRpcRequest>,
+    body: Bytes,
 ) -> Response {
+    let value: Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return rpc_error(None, -32_700, "JSON-RPC parse error"),
+    };
+    let request: JsonRpcRequest = match serde_json::from_value(value) {
+        Ok(request) => request,
+        Err(_) => return rpc_error(None, -32_600, "invalid JSON-RPC request"),
+    };
     if request.jsonrpc != "2.0" {
         return rpc_error(request.id, -32_600, "invalid JSON-RPC request");
     }
@@ -72,7 +81,7 @@ async fn handle(
     }
     let id = request.id.clone();
     let result = match request.method.as_str() {
-        "initialize" => Ok(initialize()),
+        "initialize" => initialize(request.params),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(tools()),
         "tools/call" => call_tool(state, context, request.params).await,
@@ -86,15 +95,28 @@ async fn handle(
     }
 }
 
-fn initialize() -> Value {
-    json!({
+#[derive(Debug, Deserialize)]
+struct InitializeParams {
+    #[serde(rename = "protocolVersion")]
+    protocol_version: String,
+}
+
+fn initialize(params: Value) -> Result<Value, RpcFailure> {
+    let params: InitializeParams = serde_json::from_value(params).map_err(|_| invalid_request())?;
+    if params.protocol_version != MCP_PROTOCOL_VERSION {
+        return Err(RpcFailure {
+            code: -32_602,
+            message: "MCP protocol version is unsupported",
+        });
+    }
+    Ok(json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {
             "tools": { "listChanged": false },
             "resources": { "subscribe": false, "listChanged": false }
         },
         "serverInfo": { "name": "impossible-voice", "version": env!("CARGO_PKG_VERSION") }
-    })
+    }))
 }
 
 fn tools() -> Value {
@@ -343,6 +365,13 @@ const fn invalid_params() -> RpcFailure {
     }
 }
 
+const fn invalid_request() -> RpcFailure {
+    RpcFailure {
+        code: -32_600,
+        message: "invalid JSON-RPC request",
+    }
+}
+
 const fn engine_failure() -> RpcFailure {
     RpcFailure {
         code: -32_003,
@@ -402,6 +431,7 @@ mod tests {
     use serde_json::{Value, json};
     use tokio::{net::TcpListener, task::JoinHandle};
 
+    use super::MCP_PROTOCOL_VERSION;
     use crate::voice_api::{RealtimeTranscriber, VoiceBackend, VoiceBackendError};
     use crate::{TemplateServer, VoiceEngineWorkload};
 
@@ -466,7 +496,16 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         let (endpoint, shutdown, task) = start_server().await?;
         let client = Client::new();
-        let initialized = call(&client, &endpoint, rpc(1, "initialize", json!({}))).await?;
+        let initialized = call(
+            &client,
+            &endpoint,
+            rpc(
+                1,
+                "initialize",
+                json!({ "protocolVersion": MCP_PROTOCOL_VERSION }),
+            ),
+        )
+        .await?;
         assert_eq!(
             initialized["result"]["serverInfo"]["name"],
             "impossible-voice"
@@ -539,6 +578,24 @@ mod tests {
         )
         .await?;
         assert_eq!(rejected["error"]["code"], -32_602);
+
+        let incompatible = call(
+            &client,
+            &endpoint,
+            rpc(7, "initialize", json!({ "protocolVersion": "1900-01-01" })),
+        )
+        .await?;
+        assert_eq!(incompatible["error"]["code"], -32_602);
+
+        let malformed = client
+            .post(&endpoint)
+            .header("content-type", "application/json")
+            .body("{")
+            .send()
+            .await?;
+        assert_eq!(malformed.status(), StatusCode::OK);
+        let malformed: Value = serde_json::from_slice(&malformed.bytes().await?)?;
+        assert_eq!(malformed["error"]["code"], -32_700);
 
         let _ = shutdown.cancel();
         tokio::time::timeout(Duration::from_secs(2), task).await???;

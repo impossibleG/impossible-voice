@@ -515,13 +515,18 @@ async fn websocket_session(
     )
     .await;
     let _ = token.cancel();
-    if outcome.is_err() {
+    let (close_code, close_reason) = if outcome.is_err() {
         let _ = send_error(&mut socket, session_id, "deadline_exceeded").await;
-    }
+        (1008, "session deadline exceeded")
+    } else if matches!(outcome, Ok(Err(()))) {
+        (1002, "protocol error")
+    } else {
+        (1000, "session closed")
+    };
     let _ = socket
         .send(Message::Close(Some(CloseFrame {
-            code: 1000,
-            reason: "session closed".into(),
+            code: close_code,
+            reason: close_reason.into(),
         })))
         .await;
 }
@@ -540,7 +545,10 @@ async fn websocket_loop(
                     send_error(socket, context.id().get(), "audio_frame_expected").await?;
                     return Err(());
                 }
-                let event: ClientEvent = serde_json::from_str(&text).map_err(|_| ())?;
+                let Ok(event) = serde_json::from_str::<ClientEvent>(&text) else {
+                    send_error(socket, context.id().get(), "invalid_json").await?;
+                    return Err(());
+                };
                 if handle_client_event(socket, state, context, session, event).await? {
                     return Ok(());
                 }
@@ -638,12 +646,69 @@ async fn handle_client_event(
             if session.mode == Some(SessionMode::Tts) && !session.completed =>
         {
             let backend = Arc::clone(&state.backend);
-            let context = context.clone();
-            let synthesis =
-                tokio::task::spawn_blocking(move || backend.synthesize(&input, speed, &context))
-                    .await
-                    .map_err(|_| ())?
-                    .map_err(|_| ())?;
+            let worker_context = context.clone();
+            let mut worker = tokio::task::spawn_blocking(move || {
+                backend.synthesize(&input, speed, &worker_context)
+            });
+            let synthesis = loop {
+                tokio::select! {
+                    result = &mut worker => {
+                        break result.map_err(|_| ())?.map_err(|_| ())?;
+                    }
+                    incoming = socket.recv() => {
+                        match incoming {
+                            Some(Ok(Message::Text(text))) => {
+                                let Ok(command) = serde_json::from_str::<ClientEvent>(&text) else {
+                                    let _ = context.cancellation().cancel();
+                                    worker.abort();
+                                    send_error(socket, session_id, "invalid_json").await?;
+                                    return Err(());
+                                };
+                                match command {
+                                    ClientEvent::Cancel => {
+                                        let _ = context.cancellation().cancel();
+                                        worker.abort();
+                                        send_event(socket, "cancelled", session_id, None, None, None, None, None).await?;
+                                        return Ok(true);
+                                    }
+                                    ClientEvent::Close => {
+                                        let _ = context.cancellation().cancel();
+                                        worker.abort();
+                                        return Ok(true);
+                                    }
+                                    ClientEvent::Ping => {
+                                        send_event(socket, "pong", session_id, None, None, None, None, None).await?;
+                                    }
+                                    _ => {
+                                        let _ = context.cancellation().cancel();
+                                        worker.abort();
+                                        send_error(socket, session_id, "invalid_sequence").await?;
+                                        return Err(());
+                                    }
+                                }
+                            }
+                            Some(Ok(Message::Ping(bytes))) => {
+                                socket.send(Message::Pong(bytes)).await.map_err(|_| ())?;
+                            }
+                            Some(Ok(Message::Pong(_))) => {}
+                            Some(Ok(Message::Close(_)) | Err(_)) | None => {
+                                let _ = context.cancellation().cancel();
+                                worker.abort();
+                                return Ok(true);
+                            }
+                            Some(Ok(Message::Binary(_))) => {
+                                let _ = context.cancellation().cancel();
+                                worker.abort();
+                                send_error(socket, session_id, "invalid_sequence").await?;
+                                return Err(());
+                            }
+                        }
+                    }
+                }
+            };
+            if context.cancellation().is_cancelled() {
+                return Ok(true);
+            }
             send_event(
                 socket,
                 "speech_metadata",
@@ -804,10 +869,16 @@ mod tests {
 
         fn synthesize(
             &self,
-            _text: &str,
+            text: &str,
             _speed: f32,
-            _context: &impossible_server_core::RequestContext,
+            context: &impossible_server_core::RequestContext,
         ) -> Result<Synthesis, VoiceBackendError> {
+            if text == "wait-for-cancel" {
+                while !context.cancellation().is_cancelled() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                return Err(VoiceBackendError::Cancelled);
+            }
             let audio = MonoPcm::new(22_050, vec![0.0, 0.25, -0.25, 0.0])
                 .map_err(|_| VoiceBackendError::Engine)?;
             Synthesis::from_audio(audio, 2).map_err(|_| VoiceBackendError::Engine)
@@ -900,6 +971,17 @@ mod tests {
             .send()
             .await?;
         assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let malformed = client
+            .post(format!("http://{address}/v1/audio/speech"))
+            .header("content-type", "application/json")
+            .body("{")
+            .send()
+            .await?;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        assert!(malformed.headers().contains_key("x-request-id"));
+        let malformed: Value = serde_json::from_slice(&malformed.bytes().await?)?;
+        assert_eq!(malformed["error"]["code"], "invalid_request");
         stop_server(shutdown, task).await
     }
 
@@ -939,6 +1021,14 @@ mod tests {
                 .await?
                 .contains("audio_declaration_required")
         );
+
+        let (mut malformed, _) = connect_async(format!("ws://{address}/api/v1/realtime")).await?;
+        malformed.send(ClientMessage::Text("{".into())).await?;
+        assert!(next_text(&mut malformed).await?.contains("invalid_json"));
+        let close = malformed.next().await.ok_or("missing protocol close")??;
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Protocol)
+        );
         stop_server(shutdown, task).await
     }
 
@@ -962,6 +1052,31 @@ mod tests {
         let audio = socket.next().await.ok_or("missing audio")??;
         assert!(matches!(audio, ClientMessage::Binary(bytes) if !bytes.is_empty()));
         assert!(next_text(&mut socket).await?.contains("speech_completed"));
+        stop_server(shutdown, task).await
+    }
+
+    #[tokio::test]
+    async fn realtime_tts_reads_cancel_while_native_work_is_running() -> Result<(), Box<dyn Error>>
+    {
+        let (address, shutdown, task) = start_server().await?;
+        let (mut socket, _) = connect_async(format!("ws://{address}/api/v1/realtime")).await?;
+        socket
+            .send(ClientMessage::Text(
+                r#"{"type":"session_start","mode":"tts","sample_rate":null}"#.into(),
+            ))
+            .await?;
+        assert!(next_text(&mut socket).await?.contains("session_ready"));
+        socket
+            .send(ClientMessage::Text(
+                r#"{"type":"speech_generate","input":"wait-for-cancel","speed":1.0}"#.into(),
+            ))
+            .await?;
+        socket
+            .send(ClientMessage::Text(r#"{"type":"cancel"}"#.into()))
+            .await?;
+        let cancelled =
+            tokio::time::timeout(Duration::from_millis(500), next_text(&mut socket)).await??;
+        assert!(cancelled.contains("cancelled"));
         stop_server(shutdown, task).await
     }
 

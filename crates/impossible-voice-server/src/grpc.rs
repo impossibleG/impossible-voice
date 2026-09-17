@@ -2,7 +2,7 @@
 
 use std::{pin::Pin, sync::Arc, time::Duration};
 
-use impossible_server_core::{CancellationToken, RequestContext, RequestIdSource};
+use impossible_server_core::{CancellationToken, RequestContext, RequestIdSource, RequestStop};
 use impossible_voice_audio::{AudioLimits, MonoPcm};
 use impossible_voice_protocol::v1::{
     AudioChunk, AudioEncoding, FILE_DESCRIPTOR_SET, StreamTranscribeRequest, SynthesizeRequest,
@@ -32,6 +32,7 @@ struct GrpcVoice {
     backend: Arc<dyn VoiceBackend>,
     request_ids: RequestIdSource,
     timeout: Duration,
+    shutdown: CancellationToken,
 }
 
 impl GrpcVoice {
@@ -40,6 +41,14 @@ impl GrpcVoice {
             .request_ids
             .next()
             .map_err(|_| Status::internal("request identifiers are unavailable"))?;
+        let request_stop = cancellation.clone();
+        let server_stop = self.shutdown.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                () = server_stop.cancelled() => { let _ = request_stop.cancel(); }
+                () = request_stop.cancelled() => {}
+            }
+        });
         RequestContext::new(id, cancellation, Some(self.timeout))
             .map_err(|_| Status::internal("request deadline is unavailable"))
     }
@@ -74,6 +83,7 @@ impl Voice for GrpcVoice {
 
     type StreamTranscribeStream = ResponseStream<TranscriptEvent>;
 
+    #[allow(clippy::too_many_lines)]
     async fn stream_transcribe(
         &self,
         request: Request<tonic::Streaming<StreamTranscribeRequest>>,
@@ -88,7 +98,18 @@ impl Voice for GrpcVoice {
             let mut session: Option<Box<dyn RealtimeTranscriber>> = None;
             let mut committed = false;
             loop {
-                let message = match input.message().await {
+                let message = match tokio::select! {
+                    biased;
+                    stop = context.stopped() => {
+                        let status = match stop {
+                            RequestStop::Cancelled => Status::cancelled("the request was cancelled"),
+                            RequestStop::DeadlineExceeded => Status::deadline_exceeded("the request deadline was exceeded"),
+                        };
+                        let _ = sender.send(Err(status)).await;
+                        return;
+                    }
+                    message = input.message() => message,
+                } {
                     Ok(Some(message)) => message,
                     Ok(None) => break,
                     Err(_) => {
@@ -208,6 +229,7 @@ impl Voice for GrpcVoice {
         request: Request<SynthesizeRequest>,
     ) -> Result<Response<Self::StreamSynthesizeStream>, Status> {
         let cancellation = CancellationToken::new();
+        let cancel_on_drop = CancelOnDrop(cancellation.clone());
         let context = self.context(cancellation.clone())?;
         let request = request.into_inner();
         let encoding = parse_output_encoding(request.encoding)?;
@@ -227,7 +249,7 @@ impl Voice for GrpcVoice {
         let pcm = synthesis.pcm16();
         let (sender, receiver) = mpsc::channel(OUTPUT_QUEUE);
         tokio::spawn(async move {
-            let _cancel_on_drop = CancelOnDrop(cancellation);
+            let _cancel_on_drop = cancel_on_drop;
             let chunks = pcm.len().div_ceil(TTS_CHUNK_BYTES);
             for (index, audio) in pcm.chunks(TTS_CHUNK_BYTES).enumerate() {
                 let Ok(sequence) = u32::try_from(index) else {
@@ -320,13 +342,15 @@ fn map_backend_error(error: VoiceBackendError) -> Status {
 pub async fn serve(
     listener: TcpListener,
     backend: Arc<dyn VoiceBackend>,
-    timeout: Duration,
+    request_timeout: Duration,
+    shutdown_timeout: Duration,
     shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let implementation = GrpcVoice {
         backend,
         request_ids: RequestIdSource::default(),
-        timeout,
+        timeout: request_timeout,
+        shutdown: shutdown.clone(),
     };
     let service = VoiceServer::new(implementation)
         .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
@@ -338,34 +362,51 @@ pub async fn serve(
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
         .build_v1()?;
-    Server::builder()
+    let server = Server::builder()
         .add_service(health_service)
         .add_service(reflection)
         .add_service(service)
-        .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {
-            shutdown.cancelled().await;
-        })
-        .await?;
-    Ok(())
+        .serve_with_incoming_shutdown(TcpListenerStream::new(listener), {
+            let shutdown = shutdown.clone();
+            async move { shutdown.cancelled().await }
+        });
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => result.map_err(Into::into),
+        () = shutdown.cancelled() => {
+            tokio::time::timeout(shutdown_timeout, &mut server)
+                .await
+                .map_err(|_| "gRPC shutdown exceeded its configured bound")??;
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, sync::Arc, time::Duration};
+    use std::{
+        error::Error,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
 
-    use impossible_server_core::{CancellationToken, RequestContext};
+    use impossible_server_core::{CancellationToken, RequestContext, RequestIdSource};
     use impossible_voice_audio::MonoPcm;
     use impossible_voice_protocol::v1::{
         AudioEncoding, StreamConfig, StreamTranscribeRequest, SynthesizeRequest, TranscribeRequest,
-        stream_transcribe_request, voice_client::VoiceClient,
+        stream_transcribe_request, voice_client::VoiceClient, voice_server::Voice,
     };
     use impossible_voice_stt::{Transcript, TranscriptKind};
     use impossible_voice_tts::Synthesis;
-    use tokio::net::TcpListener;
-    use tokio_stream::iter;
+    use tokio::{net::TcpListener, sync::mpsc};
+    use tokio_stream::{iter, wrappers::ReceiverStream};
+    use tonic::Request;
     use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
 
-    use super::{RealtimeTranscriber, VoiceBackend, VoiceBackendError, serve};
+    use super::{GrpcVoice, RealtimeTranscriber, VoiceBackend, VoiceBackendError, serve};
 
     struct FakeBackend;
 
@@ -402,6 +443,43 @@ mod tests {
         bytes: usize,
     }
 
+    struct CancelAwareBackend {
+        started: Arc<AtomicBool>,
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl VoiceBackend for CancelAwareBackend {
+        fn transcribe(
+            &self,
+            _audio: &MonoPcm,
+            _context: &RequestContext,
+        ) -> Result<String, VoiceBackendError> {
+            Err(VoiceBackendError::InvalidInput)
+        }
+
+        fn synthesize(
+            &self,
+            _text: &str,
+            _speed: f32,
+            context: &RequestContext,
+        ) -> Result<Synthesis, VoiceBackendError> {
+            self.started.store(true, Ordering::Release);
+            while !context.cancellation().is_cancelled() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            self.cancelled.store(true, Ordering::Release);
+            Err(VoiceBackendError::Cancelled)
+        }
+
+        fn start_transcription(
+            &self,
+            _sample_rate: u32,
+            _context: RequestContext,
+        ) -> Result<Box<dyn RealtimeTranscriber>, VoiceBackendError> {
+            Err(VoiceBackendError::InvalidInput)
+        }
+    }
+
     impl RealtimeTranscriber for FakeStream {
         fn push_pcm16(&mut self, bytes: &[u8]) -> Result<Vec<Transcript>, VoiceBackendError> {
             self.bytes += bytes.len();
@@ -431,6 +509,7 @@ mod tests {
                 listener,
                 Arc::new(FakeBackend),
                 Duration::from_secs(5),
+                Duration::from_secs(2),
                 server_shutdown,
             )
             .await
@@ -513,6 +592,90 @@ mod tests {
         );
         let _ = shutdown.cancel();
         let server_result = server.await?;
+        assert!(server_result.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn streaming_synthesis_cancels_when_pre_response_call_is_dropped()
+    -> Result<(), Box<dyn Error>> {
+        let started = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let implementation = GrpcVoice {
+            backend: Arc::new(CancelAwareBackend {
+                started: Arc::clone(&started),
+                cancelled: Arc::clone(&cancelled),
+            }),
+            request_ids: RequestIdSource::default(),
+            timeout: Duration::from_secs(5),
+            shutdown: CancellationToken::new(),
+        };
+        let call = tokio::spawn(async move {
+            implementation
+                .stream_synthesize(Request::new(SynthesizeRequest {
+                    input: "wait".to_owned(),
+                    speed: 1.0,
+                    encoding: AudioEncoding::RawPcm16 as i32,
+                }))
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !started.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        call.abort();
+        let _ = call.await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !cancelled.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn idle_stream_deadline_and_server_shutdown_are_bounded() -> Result<(), Box<dyn Error>> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let address = listener.local_addr()?;
+        let shutdown = CancellationToken::new();
+        let server_shutdown = shutdown.clone();
+        let server = tokio::spawn(async move {
+            serve(
+                listener,
+                Arc::new(FakeBackend),
+                Duration::from_millis(100),
+                Duration::from_secs(1),
+                server_shutdown,
+            )
+            .await
+        });
+        let mut client = VoiceClient::connect(format!("http://{address}")).await?;
+        let (_input, receiver) = mpsc::channel(1);
+        let mut output = client
+            .stream_transcribe(ReceiverStream::new(receiver))
+            .await?
+            .into_inner();
+        let status = tokio::time::timeout(Duration::from_secs(1), output.message())
+            .await?
+            .err()
+            .map(|status| status.code());
+        assert_eq!(status, Some(tonic::Code::DeadlineExceeded));
+
+        let (_input, receiver) = mpsc::channel(1);
+        let mut output = client
+            .stream_transcribe(ReceiverStream::new(receiver))
+            .await?
+            .into_inner();
+        let _ = shutdown.cancel();
+        let status = tokio::time::timeout(Duration::from_secs(1), output.message())
+            .await?
+            .err()
+            .map(|status| status.code());
+        assert_eq!(status, Some(tonic::Code::Cancelled));
+        let server_result = tokio::time::timeout(Duration::from_secs(1), server).await??;
         assert!(server_result.is_ok());
         Ok(())
     }

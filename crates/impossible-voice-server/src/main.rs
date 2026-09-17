@@ -48,9 +48,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let grpc_task = if let Some(backend) = backend {
                 let grpc_listener = TcpListener::bind(config.grpc_bind()).await?;
                 let grpc_shutdown = cancellation.clone();
-                let timeout = config.limits().request_timeout();
+                let request_timeout = config.limits().request_timeout();
+                let shutdown_timeout = config.limits().shutdown_timeout();
                 Some(tokio::spawn(async move {
-                    grpc::serve(grpc_listener, backend, timeout, grpc_shutdown).await
+                    grpc::serve(
+                        grpc_listener,
+                        backend,
+                        request_timeout,
+                        shutdown_timeout,
+                        grpc_shutdown,
+                    )
+                    .await
                 }))
             } else {
                 None

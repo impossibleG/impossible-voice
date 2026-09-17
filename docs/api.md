@@ -85,6 +85,10 @@ grpcurl -plaintext 127.0.0.1:50051 list
 `POST /mcp` is a bounded MCP-compatible JSON-RPC 2.0 endpoint. It implements `initialize`, `ping`,
 `tools/list`, `tools/call`, `resources/list`, and `resources/read`.
 
+Clients must initialize with protocol version `2025-03-26`; unsupported versions are rejected with
+a JSON-RPC error. Malformed JSON is returned as a JSON-RPC parse error rather than an HTTP extractor
+response.
+
 Tools are `transcribe_audio`, `synthesize_speech`, `list_models`, and `health`. Audio input uses a
 bounded `audio_base64` value and an explicit `wav` or `pcm16` encoding. There are no filesystem-path
 inputs and MCP never downloads artifacts. Synthesized audio is returned as MCP audio content with
