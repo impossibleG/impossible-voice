@@ -855,6 +855,7 @@ name = "impossible-voice-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "clap",
  "futures-util",
  "http-body-util",

@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum.workspace = true
+base64.workspace = true
 clap.workspace = true
 futures-util.workspace = true
 impossible-server-core.workspace = true

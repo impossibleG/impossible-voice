@@ -129,7 +129,7 @@ struct ApiState {
 /// Builds versioned HTTP and WebSocket routes over a loaded local backend.
 pub fn routes(backend: Arc<dyn VoiceBackend>, limits: ServerLimits) -> Router {
     let state = ApiState {
-        backend,
+        backend: Arc::clone(&backend),
         sessions: Arc::new(Semaphore::new(limits.max_concurrent_requests())),
     };
     Router::new()
@@ -139,6 +139,7 @@ pub fn routes(backend: Arc<dyn VoiceBackend>, limits: ServerLimits) -> Router {
         .route("/api/v1/speech", post(speech))
         .route("/api/v1/realtime", get(realtime))
         .with_state(state)
+        .merge(crate::mcp::routes(backend))
 }
 
 #[derive(Debug, Serialize)]
