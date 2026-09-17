@@ -16,13 +16,18 @@ futures-util.workspace = true
 impossible-server-core.workspace = true
 impossible-voice-artifacts.workspace = true
 impossible-voice-audio.workspace = true
+impossible-voice-protocol = { version = "=0.1.0", path = "../impossible-voice-protocol" }
 impossible-voice-sherpa-sys.workspace = true
 impossible-voice-stt = { version = "=0.1.0", path = "../impossible-voice-stt" }
 impossible-voice-tts = { version = "=0.1.0", path = "../impossible-voice-tts" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream.workspace = true
 toml.workspace = true
+tonic.workspace = true
+tonic-health.workspace = true
+tonic-reflection.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true

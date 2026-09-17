@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod engines;
+pub mod grpc;
 pub mod voice_api;
 
 use std::{
@@ -561,7 +562,7 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<serde_json::Va
         "speech_to_text": true,
         "text_to_speech": true,
         "realtime_websocket": true,
-        "grpc": false,
+        "grpc": true,
         "mcp": false,
         "offline_after_setup": true
     }))

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 const DEFAULT_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
+const DEFAULT_GRPC_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 50_051);
 
 /// Impossible Voice command-line interface.
 #[derive(Debug, Parser)]
@@ -70,6 +71,9 @@ pub struct ServerOptions {
     /// Loopback bind address.
     #[arg(long)]
     bind: Option<SocketAddr>,
+    /// Loopback gRPC bind address.
+    #[arg(long)]
+    grpc_bind: Option<SocketAddr>,
     /// Maximum encoded workload request body in bytes.
     #[arg(long)]
     max_request_bytes: Option<usize>,
@@ -129,6 +133,7 @@ impl Error for ConfigError {}
 struct PartialConfig {
     artifact_root: Option<PathBuf>,
     bind: Option<SocketAddr>,
+    grpc_bind: Option<SocketAddr>,
     max_request_bytes: Option<usize>,
     queue_capacity: Option<usize>,
     max_concurrent_requests: Option<usize>,
@@ -146,6 +151,7 @@ impl PartialConfig {
             };
         }
         replace!(bind);
+        replace!(grpc_bind);
         replace!(artifact_root);
         replace!(max_request_bytes);
         replace!(queue_capacity);
@@ -160,6 +166,7 @@ impl PartialConfig {
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     bind: SocketAddr,
+    grpc_bind: SocketAddr,
     limits: ServerLimits,
     artifact_root: PathBuf,
 }
@@ -169,6 +176,12 @@ impl RuntimeConfig {
     #[must_use]
     pub const fn bind(&self) -> SocketAddr {
         self.bind
+    }
+
+    /// gRPC listener address, guaranteed to be loopback-only.
+    #[must_use]
+    pub const fn grpc_bind(&self) -> SocketAddr {
+        self.grpc_bind
     }
 
     /// Validated resource and lifecycle limits.
@@ -189,6 +202,7 @@ impl RuntimeConfig {
         DoctorReport {
             status: "ok",
             bind_scope: "loopback",
+            grpc_bind_scope: "loopback",
             max_request_bytes: self.limits.max_request_bytes(),
             queue_capacity: self.limits.queue_capacity(),
             max_concurrent_requests: self.limits.max_concurrent_requests(),
@@ -204,6 +218,7 @@ impl RuntimeConfig {
 pub struct DoctorReport {
     status: &'static str,
     bind_scope: &'static str,
+    grpc_bind_scope: &'static str,
     max_request_bytes: usize,
     queue_capacity: usize,
     max_concurrent_requests: usize,
@@ -232,6 +247,7 @@ impl ServerOptions {
         let environment = read_environment(environment)?;
         let cli = PartialConfig {
             bind: self.bind,
+            grpc_bind: self.grpc_bind,
             artifact_root: self.artifact_root.clone(),
             max_request_bytes: self.max_request_bytes,
             queue_capacity: self.queue_capacity,
@@ -260,6 +276,7 @@ fn read_environment<E: Environment>(environment: &E) -> Result<PartialConfig, Co
             .get("IMPOSSIBLE_VOICE_ARTIFACT_ROOT")
             .map(PathBuf::from),
         bind: parse_environment(environment, "IMPOSSIBLE_VOICE_BIND", "bind")?,
+        grpc_bind: parse_environment(environment, "IMPOSSIBLE_VOICE_GRPC_BIND", "grpc_bind")?,
         max_request_bytes: parse_environment(
             environment,
             "IMPOSSIBLE_VOICE_MAX_REQUEST_BYTES",
@@ -307,6 +324,7 @@ fn parse_environment<T: std::str::FromStr, E: Environment>(
 
 fn resolve_layers(values: PartialConfig) -> Result<RuntimeConfig, ConfigError> {
     let bind = values.bind.unwrap_or(DEFAULT_BIND);
+    let grpc_bind = values.grpc_bind.unwrap_or(DEFAULT_GRPC_BIND);
     let artifact_root = values
         .artifact_root
         .unwrap_or_else(|| PathBuf::from("runtime-artifacts"));
@@ -315,6 +333,12 @@ fn resolve_layers(values: PartialConfig) -> Result<RuntimeConfig, ConfigError> {
     }
     if !bind.ip().is_loopback() {
         return Err(ConfigError::new("bind", "must be loopback"));
+    }
+    if !grpc_bind.ip().is_loopback() || grpc_bind == bind {
+        return Err(ConfigError::new(
+            "grpc_bind",
+            "must be distinct and loopback",
+        ));
     }
     let limits = ServerLimits::new(
         values.max_request_bytes.unwrap_or(16 * 1024 * 1024),
@@ -326,6 +350,7 @@ fn resolve_layers(values: PartialConfig) -> Result<RuntimeConfig, ConfigError> {
     .map_err(|error| ConfigError::new(error.field(), "is outside the supported bound"))?;
     Ok(RuntimeConfig {
         bind,
+        grpc_bind,
         limits,
         artifact_root,
     })
