@@ -13,6 +13,11 @@ try {
 
     $archive = @(Get-ChildItem -LiteralPath $output -Filter '*.zip' -File)
     if ($archive.Count -ne 1) { throw 'Packaging did not produce exactly one archive.' }
+    $checksum = @(Get-ChildItem -LiteralPath $output -Filter '*.zip.sha256' -File)
+    if ($checksum.Count -ne 1) { throw 'Packaging did not produce exactly one checksum.' }
+    $expectedHash = ((Get-Content -LiteralPath $checksum[0].FullName -Raw) -split '\s+')[0]
+    $actualHash = (Get-FileHash -LiteralPath $archive[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($expectedHash -ne $actualHash) { throw 'Release archive checksum is invalid.' }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($archive[0].FullName)
     try {

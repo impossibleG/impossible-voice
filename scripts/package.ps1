@@ -36,8 +36,14 @@ if ($null -eq $versionLine) { throw 'Workspace version could not be determined.'
 $version = $versionLine.Matches[0].Groups[1].Value
 $packageName = "impossible-voice-$version-$PlatformLabel"
 $stage = Join-Path $outputRoot $packageName
-$archive = Join-Path $outputRoot "$packageName.zip"
-if ((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $archive)) {
+$windowsPackage = $PlatformLabel.StartsWith('windows-')
+if (-not $windowsPackage -and $IsWindows) {
+    throw 'Linux release archives must be built on Linux so executable modes can be preserved.'
+}
+$archiveExtension = if ($windowsPackage) { 'zip' } else { 'tar.gz' }
+$archive = Join-Path $outputRoot "$packageName.$archiveExtension"
+$checksum = "$archive.sha256"
+if ((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $archive) -or (Test-Path -LiteralPath $checksum)) {
     throw 'Release output already exists; use an empty output directory.'
 }
 
@@ -45,7 +51,7 @@ New-Item -ItemType Directory -Path (Join-Path $stage 'scripts') -Force | Out-Nul
 New-Item -ItemType Directory -Path (Join-Path $stage 'config') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $stage 'docs') -Force | Out-Null
 
-$binaryName = if ($PlatformLabel.StartsWith('windows-')) { 'impossible-voice.exe' } else { 'impossible-voice' }
+$binaryName = if ($windowsPackage) { 'impossible-voice.exe' } else { 'impossible-voice' }
 Copy-Item -LiteralPath $binary -Destination (Join-Path $stage $binaryName)
 foreach ($name in @('README.md', 'NOTICE.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE-MIT', 'LICENSE-APACHE')) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) -Destination (Join-Path $stage $name)
@@ -58,5 +64,22 @@ foreach ($name in @('api.md', 'artifact-licenses.md', 'operations.md', 'privacy.
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs' $name) -Destination (Join-Path $stage 'docs' $name)
 }
 
-Compress-Archive -LiteralPath $stage -DestinationPath $archive -CompressionLevel Optimal
+if ($windowsPackage) {
+    Compress-Archive -LiteralPath $stage -DestinationPath $archive -CompressionLevel Optimal
+}
+else {
+    $executables = @(
+        (Join-Path $stage $binaryName),
+        (Join-Path $stage 'scripts/setup.sh'),
+        (Join-Path $stage 'scripts/serve.sh')
+    )
+    & chmod 0755 -- @executables
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to set Linux executable modes.' }
+    & tar -czf $archive -C $outputRoot $packageName
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to create the Linux tar.gz archive.' }
+}
+
+$digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText($checksum, "$digest  $([IO.Path]::GetFileName($archive))`n", [Text.UTF8Encoding]::new($false))
 Write-Output $archive
+Write-Output $checksum

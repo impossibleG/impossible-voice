@@ -40,9 +40,10 @@ size- and SHA-256-verified, safely extracted into staging, fully inventoried, th
 activated. `setup --offline` re-verifies an existing installation without network access; `status`
 is read-only. Ordinary `serve` never downloads artifacts.
 
-Release archives contain the native server, scripts, configuration, documentation, and notices,
-but no runtime or model bytes. See [`docs/operations.md`](docs/operations.md) for archive use,
-offline restart, and recovery.
+The release workflow publishes a Windows ZIP and a mode-preserving Linux `tar.gz`, each with a
+SHA-256 sidecar. They contain the native server, scripts, configuration, documentation, and
+notices—but no runtime or model bytes. See [`docs/operations.md`](docs/operations.md) for archive
+use, checksum verification, offline restart, and recovery.
 
 `serve` binds HTTP/WebSocket/MCP to `127.0.0.1:8080` and gRPC to `127.0.0.1:50051` by default.
 Configuration precedence is defaults, then an optional TOML file, then `IMPOSSIBLE_VOICE_*`

@@ -26,10 +26,18 @@ pass `-ArtifactRoot` on PowerShell, to select another local store.
 
 ## Native release archive
 
-Extract the archive, then use the same two commands from its root. The packaged scripts detect the
-included native binary, so Rust is not required. Windows and Linux archives intentionally exclude
-the native runtime, models, caches, generated audio, and local diagnostics; setup acquires them from
-their pinned upstream publishers.
+Windows is published as a ZIP. Linux is published as a `tar.gz` so the server and shell scripts
+retain executable modes. Verify the adjacent `.sha256` sidecar before extraction, then use the same
+two commands from the archive root. The packaged scripts detect the included native binary, so Rust
+is not required. Both archives intentionally exclude the native runtime, models, caches, generated
+audio, and local diagnostics; setup acquires them from their pinned upstream publishers.
+
+Linux checksum verification and extraction:
+
+```bash
+sha256sum --check impossible-voice-0.1.0-linux-x86_64.tar.gz.sha256
+tar -xzf impossible-voice-0.1.0-linux-x86_64.tar.gz
+```
 
 ## Offline verification and restart
 
