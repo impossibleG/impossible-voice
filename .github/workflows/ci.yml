@@ -32,6 +32,8 @@ jobs:
         run: |
           ./scripts/verify-vendored-impossible-server.ps1
           ./scripts/test-vendored-impossible-server.ps1
+      - shell: pwsh
+        run: ./scripts/test-package.ps1
       - run: cargo test --locked --manifest-path vendor/impossible-server/Cargo.toml --target-dir target/foundation
 
   supply-chain:

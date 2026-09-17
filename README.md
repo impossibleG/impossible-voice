@@ -5,10 +5,27 @@ release targets one curated local STT model and one curated local TTS voice with
 checksum-verified installation and offline operation after setup.
 
 The public v0.1 promise is frozen in [`docs/product-contract.md`](docs/product-contract.md). HTTP,
-realtime WebSocket, gRPC, and bounded MCP transports are implemented; native/container packaging
-remains release work.
+realtime WebSocket, gRPC, and bounded MCP transports are implemented. Native Windows and Linux
+archives are built by the release workflow; a prebuilt Linux container is not published in v0.1.
 
-Install the pinned local artifacts, verify them, then start the server:
+From a source checkout, install the pinned local artifacts with one command, then start the server
+with one command.
+
+PowerShell:
+
+```powershell
+./scripts/setup.ps1
+./scripts/serve.ps1
+```
+
+Bash:
+
+```bash
+./scripts/setup.sh
+./scripts/serve.sh
+```
+
+The equivalent direct CLI is:
 
 ```text
 cargo run --locked --bin impossible-voice -- setup
@@ -22,6 +39,10 @@ one English TTS voice into the ignored `runtime-artifacts` directory. Downloads 
 size- and SHA-256-verified, safely extracted into staging, fully inventoried, then atomically
 activated. `setup --offline` re-verifies an existing installation without network access; `status`
 is read-only. Ordinary `serve` never downloads artifacts.
+
+Release archives contain the native server, scripts, configuration, documentation, and notices,
+but no runtime or model bytes. See [`docs/operations.md`](docs/operations.md) for archive use,
+offline restart, and recovery.
 
 `serve` binds HTTP/WebSocket/MCP to `127.0.0.1:8080` and gRPC to `127.0.0.1:50051` by default.
 Configuration precedence is defaults, then an optional TOML file, then `IMPOSSIBLE_VOICE_*`
