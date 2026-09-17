@@ -599,7 +599,8 @@ fn extract_verified_archive(
                 .map_err(|_| ArtifactError::new("artifact directory extraction failed"))?;
             continue;
         }
-        if !kind.is_file() || !seen.insert(relative_text.clone()) {
+        let collision_key = relative_text.to_ascii_lowercase();
+        if !kind.is_file() || !seen.insert(collision_key) {
             return Err(ArtifactError::new(
                 "artifact archive contains an unsupported or duplicate entry",
             ));
@@ -893,6 +894,31 @@ mod tests {
     fn archive_paths_cannot_escape_the_expected_root() {
         assert!(strip_archive_root(std::path::Path::new("fixture/../escape"), "fixture").is_err());
         assert!(strip_archive_root(std::path::Path::new("other/file"), "fixture").is_err());
+    }
+
+    #[test]
+    fn extraction_rejects_ascii_case_colliding_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let archive_path = directory.path().join("collision.tar.bz2");
+        let archive_file = fs::File::create(&archive_path)?;
+        let encoder = BzEncoder::new(archive_file, Compression::best());
+        let mut builder = tar::Builder::new(encoder);
+        for path in ["fixture/File.bin", "fixture/file.bin"] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, path, [1_u8].as_slice())?;
+        }
+        builder.finish()?;
+        let encoder = builder.into_inner()?;
+        encoder.finish()?;
+        let bytes = fs::read(&archive_path)?;
+        let spec = fixture_spec(bytes.len() as u64, hex_digest(Sha256::digest(&bytes)));
+        let staging = directory.path().join("staging");
+        fs::create_dir(&staging)?;
+        assert!(extract_verified_archive(&archive_path, &staging, &spec).is_err());
+        Ok(())
     }
 
     #[tokio::test]

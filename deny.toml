@@ -15,8 +15,14 @@ include-dev = true
 allow = [
     "Apache-2.0",
     "BSD-3-Clause",
+    # libbz2-rs-sys preserves the permissive license shipped with bzip2 1.0.6.
+    "bzip2-1.0.6",
+    # rustls, ring, webpki, and the native loader use reviewed ISC components.
+    "ISC",
     "MIT",
     "Unicode-3.0",
+    # webpki-roots packages the Mozilla root-certificate data under this permissive license.
+    "CDLA-Permissive-2.0",
 ]
 exceptions = []
 
@@ -25,7 +31,14 @@ multiple-versions = "deny"
 wildcards = "deny"
 highlight = "all"
 deny = []
-skip = []
+skip = [
+    # displaydoc/futures-macro use syn 3 while the remaining proc-macro graph uses syn 2.
+    { name = "syn", version = "=3.0.6" },
+    # The two ICU derive generations independently require these adjacent synstructure releases.
+    { name = "synstructure", version = "=0.14.0" },
+    # toml 0.9 temporarily contains both its direct parser API and the spec-1.1 parser generation.
+    { name = "winnow", version = "=1.0.4" },
+]
 skip-tree = []
 
 [sources]
