@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/impossible-voice-header.png" alt="Impossible G — Voice" width="860">
+</p>
+
 # Impossible Voice
 
 Impossible Voice is a ready-made, self-hosted speech-to-text and text-to-speech server. The first

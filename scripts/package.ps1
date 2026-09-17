@@ -50,6 +50,7 @@ if ((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $archive) -or (T
 New-Item -ItemType Directory -Path (Join-Path $stage 'scripts') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $stage 'config') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $stage 'docs') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $stage 'docs/assets') -Force | Out-Null
 
 $binaryName = if ($windowsPackage) { 'impossible-voice.exe' } else { 'impossible-voice' }
 Copy-Item -LiteralPath $binary -Destination (Join-Path $stage $binaryName)
@@ -63,6 +64,7 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot 'config/impossible-voice.examp
 foreach ($name in @('api.md', 'artifact-licenses.md', 'operations.md', 'privacy.md', 'product-contract.md')) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs' $name) -Destination (Join-Path $stage 'docs' $name)
 }
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs/assets/impossible-voice-header.png') -Destination (Join-Path $stage 'docs/assets/impossible-voice-header.png')
 
 if ($windowsPackage) {
     Compress-Archive -LiteralPath $stage -DestinationPath $archive -CompressionLevel Optimal

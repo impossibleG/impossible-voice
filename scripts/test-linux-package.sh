@@ -33,6 +33,7 @@ package_root="$(find "${test_root}" -mindepth 1 -maxdepth 1 -type d -name 'impos
 test -x "${package_root}/impossible-voice"
 test -x "${package_root}/scripts/setup.sh"
 test -x "${package_root}/scripts/serve.sh"
+test -f "${package_root}/docs/assets/impossible-voice-header.png"
 "${package_root}/impossible-voice" --version
 bash -n "${package_root}/scripts/setup.sh" "${package_root}/scripts/serve.sh"
 

@@ -14,6 +14,9 @@ $credentialPatterns = @(
     "(?im)(?:^|[,{])\s*(?:`"$credentialName`"|'$credentialName')\s*:\s*(?:`"(?<double>[^`"\r\n]*)`"|'(?<single>[^'\r\n]*)'|(?<bare>[^\s,;}#]+))"
 )
 $safeValue = '(?i)^(?:\$\{[A-Z_][A-Z0-9_]*\}|\$env:[A-Z_][A-Z0-9_]*|<[^>]+>|example|placeholder|dummy|fixture|test|test[-_]?placeholder|change[-_]?me|none|null|redacted|not[-_]?set|x{3,})$'
+$approvedBinaryHashes = @{
+    'docs/assets/impossible-voice-header.png' = 'a75515ffbe2dbbb90800b723c8db65ec1f4b5c17fcc63225bafa79f655fdad80'
+}
 
 Push-Location $repoRoot
 try {
@@ -32,6 +35,12 @@ try {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
         $bytes = [IO.File]::ReadAllBytes((Resolve-Path $file))
         if ([Array]::IndexOf($bytes, [byte]0) -ge 0) {
+            if ($approvedBinaryHashes.ContainsKey($normalized)) {
+                $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+                if ($digest -ceq $approvedBinaryHashes[$normalized]) { continue }
+                $findings.Add("${normalized}: approved binary content hash differs")
+                continue
+            }
             $findings.Add("${normalized}: unexpected binary content")
             continue
         }

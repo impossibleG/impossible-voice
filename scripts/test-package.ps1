@@ -27,6 +27,7 @@ try {
             throw 'Archive contains a forbidden runtime, model, build, or audio artifact.'
         }
         if (-not [bool]($entries -match '/THIRD_PARTY_NOTICES\.md$')) { throw 'Third-party notices are missing.' }
+        if (-not [bool]($entries -match '/docs/assets/impossible-voice-header\.png$')) { throw 'README branding asset is missing.' }
         if (-not [bool]($entries -match '/scripts/smoke-public\.ps1$')) { throw 'Public release smoke is missing.' }
     }
     finally {
