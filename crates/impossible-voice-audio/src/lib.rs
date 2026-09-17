@@ -65,6 +65,19 @@ impl AudioLimits {
         }
         Ok(())
     }
+
+    /// Validates an already decoded recording against the same duration and memory policy.
+    ///
+    /// # Errors
+    /// Rejects PCM whose equivalent PCM16 size or duration exceeds this policy.
+    pub fn validate_pcm(self, audio: &MonoPcm) -> Result<(), AudioError> {
+        let encoded_bytes = audio
+            .samples
+            .len()
+            .checked_mul(2)
+            .ok_or_else(|| AudioError::new("encoded audio exceeds its byte limit"))?;
+        self.admit(encoded_bytes, audio.sample_rate, audio.samples.len())
+    }
 }
 
 impl Default for AudioLimits {
@@ -340,6 +353,80 @@ impl IncrementalPcm16 {
     }
 }
 
+/// Deterministic stateful linear resampler for incrementally delivered PCM.
+///
+/// Output is identical to resampling the concatenated input with [`MonoPcm::resample`]. The
+/// retained input is intentionally bounded by the owning stream's [`AudioLimits`].
+#[derive(Debug)]
+pub struct StreamingResampler {
+    source_rate: u32,
+    target_rate: u32,
+    input: Vec<f32>,
+    next_output: usize,
+}
+
+impl StreamingResampler {
+    /// Creates an empty resampler between supported rates.
+    ///
+    /// # Errors
+    /// Rejects unsupported source or target rates.
+    pub fn new(source_rate: u32, target_rate: u32) -> Result<Self, AudioError> {
+        validate_rate(source_rate)?;
+        validate_rate(target_rate)?;
+        Ok(Self {
+            source_rate,
+            target_rate,
+            input: Vec::new(),
+            next_output: 0,
+        })
+    }
+
+    /// Appends normalized PCM and returns only newly available resampled samples.
+    ///
+    /// # Errors
+    /// Rejects empty, non-finite, or out-of-range PCM and arithmetic overflow.
+    pub fn push(&mut self, samples: &[f32]) -> Result<Vec<f32>, AudioError> {
+        if samples.is_empty()
+            || samples
+                .iter()
+                .any(|sample| !sample.is_finite() || !(-1.0..=1.0).contains(sample))
+        {
+            return Err(AudioError::new("streaming resampler input is invalid"));
+        }
+        self.input
+            .len()
+            .checked_add(samples.len())
+            .ok_or_else(|| AudioError::new("resampled audio is too large"))?;
+        self.input.extend_from_slice(samples);
+
+        let last_input = self.input.len() - 1;
+        let available = (last_input as u64)
+            .checked_mul(u64::from(self.target_rate))
+            .and_then(|value| value.checked_div(u64::from(self.source_rate)))
+            .and_then(|value| value.checked_add(1))
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| AudioError::new("resampled audio is too large"))?;
+        let mut output = Vec::with_capacity(available.saturating_sub(self.next_output));
+        while self.next_output < available {
+            let position = (self.next_output as u64)
+                .checked_mul(u64::from(self.source_rate))
+                .ok_or_else(|| AudioError::new("resampled audio is too large"))?;
+            let left = usize::try_from(position / u64::from(self.target_rate))
+                .map_err(|_| AudioError::new("resampled audio is too large"))?;
+            let remainder = position % u64::from(self.target_rate);
+            let right = left.saturating_add(1).min(last_input);
+            let remainder = u16::try_from(remainder)
+                .map_err(|_| AudioError::new("resampled audio is too large"))?;
+            let target = u16::try_from(self.target_rate)
+                .map_err(|_| AudioError::new("resampled audio is too large"))?;
+            let fraction = f32::from(remainder) / f32::from(target);
+            output.push(self.input[left] + (self.input[right] - self.input[left]) * fraction);
+            self.next_output += 1;
+        }
+        Ok(output)
+    }
+}
+
 /// Bounded energy voice-activity configuration.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VadConfig {
@@ -521,7 +608,9 @@ fn float_to_i16(sample: f32) -> i16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioLimits, EnergyVad, IncrementalPcm16, MonoPcm, VadConfig, VadEvent};
+    use super::{
+        AudioLimits, EnergyVad, IncrementalPcm16, MonoPcm, StreamingResampler, VadConfig, VadEvent,
+    };
 
     #[test]
     fn pcm16_round_trips_through_wav() -> Result<(), Box<dyn std::error::Error>> {
@@ -584,6 +673,22 @@ mod tests {
         assert_eq!(first.samples().first(), Some(&-1.0));
         assert_eq!(first.samples().last(), Some(&1.0));
         assert_eq!(first.samples().len(), 5);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_resampling_matches_one_shot_across_chunk_boundaries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let samples = (0_u16..321)
+            .map(|index| (f32::from(index) / 321.0).sin())
+            .collect::<Vec<_>>();
+        let expected = MonoPcm::new(44_100, samples.clone())?.resample(16_000)?;
+        let mut resampler = StreamingResampler::new(44_100, 16_000)?;
+        let mut actual = Vec::new();
+        for chunk in samples.chunks(17) {
+            actual.extend(resampler.push(chunk)?);
+        }
+        assert_eq!(actual, expected.samples());
         Ok(())
     }
 

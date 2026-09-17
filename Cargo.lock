@@ -773,10 +773,20 @@ dependencies = [
 [[package]]
 name = "impossible-voice-stt"
 version = "0.1.0"
+dependencies = [
+ "impossible-server-core",
+ "impossible-voice-audio",
+ "impossible-voice-sherpa-sys",
+]
 
 [[package]]
 name = "impossible-voice-tts"
 version = "0.1.0"
+dependencies = [
+ "impossible-server-core",
+ "impossible-voice-audio",
+ "impossible-voice-sherpa-sys",
+]
 
 [[package]]
 name = "indexmap"

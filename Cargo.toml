@@ -26,6 +26,7 @@ fs2 = "=0.4.3"
 futures-util = "=0.3.34"
 http-body-util = "=0.1.3"
 impossible-voice-artifacts = { version = "=0.1.0", path = "crates/impossible-voice-artifacts" }
+impossible-voice-audio = { version = "=0.1.0", path = "crates/impossible-voice-audio" }
 impossible-voice-sherpa-sys = { version = "=0.1.0", path = "crates/impossible-voice-sherpa-sys" }
 impossible-server-core = { version = "=0.1.0", path = "vendor/impossible-server/crates/impossible-server-core" }
 impossible-server-testkit = { version = "=0.1.0", path = "vendor/impossible-server/crates/impossible-server-testkit" }

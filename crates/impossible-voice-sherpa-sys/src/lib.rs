@@ -626,11 +626,17 @@ impl OfflineTts {
     ///
     /// # Errors
     /// Rejects empty/NUL text, invalid speed, native failure, or invalid native output.
-    pub fn generate(&self, text: &str, speed: f32) -> Result<GeneratedAudio, NativeError> {
+    pub fn generate(
+        &self,
+        text: &str,
+        speed: f32,
+        max_samples: usize,
+    ) -> Result<GeneratedAudio, NativeError> {
         if text.trim().is_empty()
             || text.len() > 16_384
             || !speed.is_finite()
             || !(0.5..=2.0).contains(&speed)
+            || max_samples == 0
         {
             return Err(NativeError::new("speech synthesis input is invalid"));
         }
@@ -643,7 +649,7 @@ impl OfflineTts {
         if result.is_null() {
             return Err(NativeError::new("speech synthesis failed"));
         }
-        let audio = unsafe { copy_generated_audio(result) };
+        let audio = unsafe { copy_generated_audio(result, max_samples) };
         unsafe { (self.runtime.0.destroy_generated_audio)(result) };
         audio
     }
@@ -657,6 +663,7 @@ impl Drop for OfflineTts {
 
 unsafe fn copy_generated_audio(
     pointer: *const GeneratedAudioRaw,
+    max_samples: usize,
 ) -> Result<GeneratedAudio, NativeError> {
     let raw = unsafe { &*pointer };
     if raw.samples.is_null() || raw.n <= 0 || raw.sample_rate <= 0 {
@@ -664,6 +671,11 @@ unsafe fn copy_generated_audio(
     }
     let length = usize::try_from(raw.n)
         .map_err(|_| NativeError::new("speech synthesis output is invalid"))?;
+    if length > max_samples {
+        return Err(NativeError::new(
+            "speech synthesis output exceeds its limit",
+        ));
+    }
     let samples = unsafe { std::slice::from_raw_parts(raw.samples, length) }.to_vec();
     if samples.iter().any(|sample| !sample.is_finite()) {
         return Err(NativeError::new("speech synthesis output is invalid"));
