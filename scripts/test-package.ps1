@@ -17,11 +17,11 @@ try {
     $zip = [IO.Compression.ZipFile]::OpenRead($archive[0].FullName)
     try {
         $entries = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
-        if (-not ($entries -match '/impossible-voice\.exe$')) { throw 'Packaged binary is missing.' }
-        if ($entries -match '(?i)(runtime-artifacts|\.shame|target/|\.wav$|\.onnx$|\.dll$|\.so$)') {
+        if (-not [bool]($entries -match '/impossible-voice\.exe$')) { throw 'Packaged binary is missing.' }
+        if ([bool]($entries -match '(?i)(runtime-artifacts|\.shame|target/|\.wav$|\.onnx$|\.dll$|\.so$)')) {
             throw 'Archive contains a forbidden runtime, model, build, or audio artifact.'
         }
-        if ($entries -notmatch '/THIRD_PARTY_NOTICES\.md$') { throw 'Third-party notices are missing.' }
+        if (-not [bool]($entries -match '/THIRD_PARTY_NOTICES\.md$')) { throw 'Third-party notices are missing.' }
     }
     finally {
         $zip.Dispose()
