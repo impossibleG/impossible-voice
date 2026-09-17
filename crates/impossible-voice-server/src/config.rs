@@ -33,6 +33,29 @@ pub enum Command {
     Serve(ServerOptions),
     /// Validate configuration without starting listeners or downloading artifacts.
     Doctor(ServerOptions),
+    /// Install or verify the curated runtime and English STT/TTS models.
+    Setup(ArtifactOptions),
+    /// Inspect curated artifacts without writing or making network requests.
+    Status(ArtifactLocation),
+}
+
+/// Curated artifact setup options.
+#[derive(Debug, Args)]
+pub struct ArtifactOptions {
+    /// Artifact store root. The directory is ignored by the repository.
+    #[arg(long, default_value = "runtime-artifacts")]
+    pub artifact_root: PathBuf,
+    /// Forbid downloads and verify already installed artifacts only.
+    #[arg(long)]
+    pub offline: bool,
+}
+
+/// Curated artifact inspection options.
+#[derive(Debug, Args)]
+pub struct ArtifactLocation {
+    /// Artifact store root. The directory is ignored by the repository.
+    #[arg(long, default_value = "runtime-artifacts")]
+    pub artifact_root: PathBuf,
 }
 
 /// CLI overrides shared by `serve` and `doctor`.

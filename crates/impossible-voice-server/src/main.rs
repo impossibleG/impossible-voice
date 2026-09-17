@@ -2,6 +2,7 @@
 
 use clap::Parser;
 use impossible_server_core::CancellationToken;
+use impossible_voice_artifacts::ArtifactStore;
 use impossible_voice_server::{
     PlaceholderWorkload, TemplateServer,
     config::{Cli, Command, ProcessEnvironment},
@@ -30,6 +31,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Doctor(options) => {
             let config = options.resolve(&environment)?;
             println!("{}", serde_json::to_string(&config.doctor_report())?);
+        }
+        Command::Setup(options) => {
+            let report = ArtifactStore::new(options.artifact_root)?
+                .setup(options.offline)
+                .await?;
+            println!("{}", serde_json::to_string(&report)?);
+        }
+        Command::Status(options) => {
+            let report = ArtifactStore::new(options.artifact_root)?.status()?;
+            println!("{}", serde_json::to_string(&report)?);
         }
     }
     Ok(())

@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "profile": "impossible-voice-en-cpu-v1",
+  "artifacts": [
+    {
+      "id": "sherpa-onnx-runtime-linux-x86_64-v1.13.8",
+      "kind": "runtime",
+      "platforms": ["linux-x86_64"],
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-linux-x64-shared-lib.tar.bz2",
+      "size": 9816899,
+      "sha256": "3892d184be41027e18165e67f549cd4e4cdd8dcd73ac5579e97afd55e14e30b6",
+      "archive_root": "sherpa-onnx-v1.13.8-linux-x64-shared-lib",
+      "max_unpacked_bytes": 134217728,
+      "required_paths": [
+        "lib/libonnxruntime.so",
+        "lib/libsherpa-onnx-c-api.so"
+      ],
+      "licenses": [
+        {
+          "scope": "runtime",
+          "spdx": "Apache-2.0",
+          "source": "https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/LICENSE",
+          "revision": "v1.13.8"
+        },
+        {
+          "scope": "embedded-onnx-runtime",
+          "spdx": "MIT",
+          "source": "https://github.com/microsoft/onnxruntime/blob/v1.28.2/LICENSE",
+          "revision": "v1.28.2"
+        },
+        {
+          "scope": "embedded-piper-phonemize",
+          "spdx": "MIT",
+          "source": "https://github.com/csukuangfj/piper-phonemize/blob/f3ff95afc03640bc1399e113e83361192a2fafb4/LICENSE.md",
+          "revision": "f3ff95afc03640bc1399e113e83361192a2fafb4"
+        },
+        {
+          "scope": "embedded-espeak-ng",
+          "spdx": "GPL-3.0-or-later",
+          "source": "https://github.com/csukuangfj/espeak-ng/blob/ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING",
+          "revision": "ed530aa113046142eb5115cf2fc9157854d0ffe1"
+        }
+      ]
+    },
+    {
+      "id": "sherpa-onnx-runtime-windows-x86_64-v1.13.8",
+      "kind": "runtime",
+      "platforms": ["windows-x86_64"],
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-win-x64-shared-MD-Release-lib.tar.bz2",
+      "size": 7383373,
+      "sha256": "3c43d1efba780d7ae7f5d64cae08803dcecf417109a5f593684e536f3cbd5cf1",
+      "archive_root": "sherpa-onnx-v1.13.8-win-x64-shared-MD-Release-lib",
+      "max_unpacked_bytes": 134217728,
+      "required_paths": [
+        "lib/onnxruntime.dll",
+        "lib/onnxruntime_providers_shared.dll",
+        "lib/sherpa-onnx-c-api.dll"
+      ],
+      "licenses": [
+        {
+          "scope": "runtime",
+          "spdx": "Apache-2.0",
+          "source": "https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/LICENSE",
+          "revision": "v1.13.8"
+        },
+        {
+          "scope": "embedded-onnx-runtime",
+          "spdx": "MIT",
+          "source": "https://github.com/microsoft/onnxruntime/blob/v1.28.2/LICENSE",
+          "revision": "v1.28.2"
+        },
+        {
+          "scope": "embedded-piper-phonemize",
+          "spdx": "MIT",
+          "source": "https://github.com/csukuangfj/piper-phonemize/blob/f3ff95afc03640bc1399e113e83361192a2fafb4/LICENSE.md",
+          "revision": "f3ff95afc03640bc1399e113e83361192a2fafb4"
+        },
+        {
+          "scope": "embedded-espeak-ng",
+          "spdx": "GPL-3.0-or-later",
+          "source": "https://github.com/csukuangfj/espeak-ng/blob/ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING",
+          "revision": "ed530aa113046142eb5115cf2fc9157854d0ffe1"
+        }
+      ]
+    },
+    {
+      "id": "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
+      "kind": "stt-model",
+      "platforms": ["linux-x86_64", "windows-x86_64"],
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8.tar.bz2",
+      "size": 99459493,
+      "sha256": "479759fbd5c69c909e7175d7773105a1bfabf82fa533de68c546c89d85f234e8",
+      "archive_root": "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
+      "max_unpacked_bytes": 268435456,
+      "required_paths": [
+        "model.int8.onnx",
+        "tokens.txt"
+      ],
+      "licenses": [
+        {
+          "scope": "upstream-model",
+          "spdx": "CC-BY-4.0",
+          "source": "https://huggingface.co/nvidia/stt_en_fastconformer_hybrid_large_streaming_multi",
+          "revision": "ae98143333690bd7ced4bc8ec16769bcb8918374"
+        }
+      ]
+    },
+    {
+      "id": "vits-piper-en_US-kristin-medium-int8",
+      "kind": "tts-model",
+      "platforms": ["linux-x86_64", "windows-x86_64"],
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-kristin-medium-int8.tar.bz2",
+      "size": 20882061,
+      "sha256": "16289d7ee8e6b2311a0a0af6531a55f498f82499644a1bb6fddb991fe6fa950c",
+      "archive_root": "vits-piper-en_US-kristin-medium-int8",
+      "max_unpacked_bytes": 268435456,
+      "required_paths": [
+        "MODEL_CARD",
+        "en_US-kristin-medium.onnx",
+        "en_US-kristin-medium.onnx.json",
+        "tokens.txt",
+        "espeak-ng-data"
+      ],
+      "licenses": [
+        {
+          "scope": "voice-model-repository",
+          "spdx": "MIT",
+          "source": "https://huggingface.co/rhasspy/piper-voices",
+          "revision": "1162a9173d0ce503555aed757976b7a9912eae4c"
+        },
+        {
+          "scope": "training-recordings",
+          "spdx": "LicenseRef-Public-Domain",
+          "source": "https://huggingface.co/rhasspy/piper-voices/blob/1162a9173d0ce503555aed757976b7a9912eae4c/en/en_US/kristin/medium/MODEL_CARD",
+          "revision": "1162a9173d0ce503555aed757976b7a9912eae4c"
+        },
+        {
+          "scope": "bundled-espeak-ng-data",
+          "spdx": "GPL-3.0-or-later",
+          "source": "https://github.com/csukuangfj/espeak-ng/blob/ed530aa113046142eb5115cf2fc9157854d0ffe1/COPYING",
+          "revision": "ed530aa113046142eb5115cf2fc9157854d0ffe1"
+        }
+      ]
+    }
+  ]
+}
