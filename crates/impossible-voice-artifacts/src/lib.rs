@@ -117,6 +117,52 @@ pub struct ArtifactStore {
     client: Client,
 }
 
+/// Verified private paths required to load the curated native engines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedProfile {
+    runtime: PathBuf,
+    stt: PathBuf,
+    tts: PathBuf,
+}
+
+impl VerifiedProfile {
+    /// Root of the selected platform runtime object.
+    #[must_use]
+    pub fn runtime_root(&self) -> &Path {
+        &self.runtime
+    }
+
+    /// Streaming `NeMo` CTC model path.
+    #[must_use]
+    pub fn stt_model(&self) -> PathBuf {
+        self.stt.join("model.int8.onnx")
+    }
+
+    /// Streaming `NeMo` token table path.
+    #[must_use]
+    pub fn stt_tokens(&self) -> PathBuf {
+        self.stt.join("tokens.txt")
+    }
+
+    /// Kristin VITS model path.
+    #[must_use]
+    pub fn tts_model(&self) -> PathBuf {
+        self.tts.join("en_US-kristin-medium.onnx")
+    }
+
+    /// Kristin VITS token table path.
+    #[must_use]
+    pub fn tts_tokens(&self) -> PathBuf {
+        self.tts.join("tokens.txt")
+    }
+
+    /// Pinned `espeak-ng-data` path used for English phonemization.
+    #[must_use]
+    pub fn tts_data_dir(&self) -> PathBuf {
+        self.tts.join("espeak-ng-data")
+    }
+}
+
 impl ArtifactStore {
     /// Creates an artifact store without reading, writing, or downloading anything.
     ///
@@ -215,6 +261,20 @@ impl ArtifactStore {
             status: if ready { "ready" } else { "not-ready" },
             artifacts,
         })
+    }
+
+    /// Verifies the complete profile and returns private engine paths without writing or downloading.
+    ///
+    /// # Errors
+    /// Returns a sanitized error when any selected object is missing, altered, or unsupported.
+    pub fn verified_profile(&self) -> Result<VerifiedProfile, ArtifactError> {
+        let manifest = parse_manifest()?;
+        let platform = current_platform()?;
+        let selected = select_artifacts(&manifest, platform)?;
+        let runtime = verified_kind_path(self, &selected, "runtime")?;
+        let stt = verified_kind_path(self, &selected, "stt-model")?;
+        let tts = verified_kind_path(self, &selected, "tts-model")?;
+        Ok(VerifiedProfile { runtime, stt, tts })
     }
 
     async fn ensure_artifact(
@@ -364,6 +424,20 @@ impl ArtifactStore {
             .join("objects")
             .join(format!("{}-{}", artifact.id, &artifact.sha256[..16]))
     }
+}
+
+fn verified_kind_path(
+    store: &ArtifactStore,
+    selected: &[ArtifactSpec],
+    kind: &str,
+) -> Result<PathBuf, ArtifactError> {
+    let artifact = selected
+        .iter()
+        .find(|artifact| artifact.kind == kind)
+        .ok_or_else(|| ArtifactError::new("curated artifact profile is incomplete"))?;
+    let path = store.object_path(artifact);
+    verify_object(&path, artifact)?;
+    Ok(path)
 }
 
 fn parse_manifest() -> Result<CuratedManifest, ArtifactError> {
