@@ -4,10 +4,11 @@ Impossible Voice is a ready-made, self-hosted speech-to-text and text-to-speech 
 release targets one curated local STT model and one curated local TTS voice with automatic,
 checksum-verified installation and offline operation after setup.
 
-The public v0.1 promise is frozen in [`docs/product-contract.md`](docs/product-contract.md). The
-implementation is under active development and is not yet a release.
+The public v0.1 promise is frozen in [`docs/product-contract.md`](docs/product-contract.md). HTTP,
+realtime WebSocket, gRPC, and bounded MCP transports are implemented; native/container packaging
+remains release work.
 
-The control plane is runnable while voice engines are being integrated:
+Install the pinned local artifacts, verify them, then start the server:
 
 ```text
 cargo run --locked --bin impossible-voice -- setup
@@ -22,15 +23,34 @@ size- and SHA-256-verified, safely extracted into staging, fully inventoried, th
 activated. `setup --offline` re-verifies an existing installation without network access; `status`
 is read-only. Ordinary `serve` never downloads artifacts.
 
-`serve` binds to `127.0.0.1:8080` by default. Configuration precedence is defaults, then an
-optional TOML file, then `IMPOSSIBLE_VOICE_*` environment variables, then explicit CLI flags.
+`serve` binds HTTP/WebSocket/MCP to `127.0.0.1:8080` and gRPC to `127.0.0.1:50051` by default.
+Configuration precedence is defaults, then an optional TOML file, then `IMPOSSIBLE_VOICE_*`
+environment variables, then explicit CLI flags.
 See [`config/impossible-voice.example.toml`](config/impossible-voice.example.toml). Readiness
 remains false until the curated artifacts and both engines are usable.
 
+Batch transcription:
+
+```text
+curl -F "file=@sample.wav;type=audio/wav" http://127.0.0.1:8080/v1/audio/transcriptions
+```
+
+Speech synthesis:
+
+```text
+curl -H "content-type: application/json" \
+  -d '{"input":"Impossible Voice is local.","voice":"kristin","response_format":"wav"}' \
+  http://127.0.0.1:8080/v1/audio/speech --output speech.wav
+```
+
+The exact HTTP, WebSocket, gRPC, and MCP contracts and bounded examples are documented in
+[`docs/api.md`](docs/api.md). WebSocket and gRPC TTS chunks are emitted after native synthesis
+finishes; they are bounded transport chunks, not incremental model generation.
+
 ## Development
 
-The repository is a Rust workspace. The current tree establishes the public contract and crate
-boundaries; speech engines and network transports will arrive in later, feature-specific commits.
+The repository is a Rust workspace with isolated audio, artifact, native FFI, STT, TTS, protocol,
+and server crates.
 
 ```text
 cargo fmt --all -- --check

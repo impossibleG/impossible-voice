@@ -1,5 +1,6 @@
 # Defaults are shown explicitly. CLI flags override environment variables, which override this file.
 bind = "127.0.0.1:8080"
+grpc_bind = "127.0.0.1:50051"
 max_request_bytes = 16777216
 queue_capacity = 128
 max_concurrent_requests = 4
