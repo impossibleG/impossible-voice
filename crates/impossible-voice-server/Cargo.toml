@@ -1,0 +1,13 @@
+[package]
+name = "impossible-voice-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "impossible-voice"
+path = "src/main.rs"
+
+[lints]
+workspace = true
