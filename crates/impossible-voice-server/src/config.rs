@@ -64,6 +64,9 @@ pub struct ServerOptions {
     /// Optional bounded TOML configuration file.
     #[arg(long)]
     config: Option<PathBuf>,
+    /// Verified artifact store root. Ordinary serving never downloads into it.
+    #[arg(long)]
+    artifact_root: Option<PathBuf>,
     /// Loopback bind address.
     #[arg(long)]
     bind: Option<SocketAddr>,
@@ -121,9 +124,10 @@ impl fmt::Display for ConfigError {
 
 impl Error for ConfigError {}
 
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialConfig {
+    artifact_root: Option<PathBuf>,
     bind: Option<SocketAddr>,
     max_request_bytes: Option<usize>,
     queue_capacity: Option<usize>,
@@ -142,6 +146,7 @@ impl PartialConfig {
             };
         }
         replace!(bind);
+        replace!(artifact_root);
         replace!(max_request_bytes);
         replace!(queue_capacity);
         replace!(max_concurrent_requests);
@@ -152,28 +157,35 @@ impl PartialConfig {
 }
 
 /// Validated effective process configuration.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     bind: SocketAddr,
     limits: ServerLimits,
+    artifact_root: PathBuf,
 }
 
 impl RuntimeConfig {
     /// Listener address, guaranteed to be loopback-only.
     #[must_use]
-    pub const fn bind(self) -> SocketAddr {
+    pub const fn bind(&self) -> SocketAddr {
         self.bind
     }
 
     /// Validated resource and lifecycle limits.
     #[must_use]
-    pub const fn limits(self) -> ServerLimits {
+    pub const fn limits(&self) -> ServerLimits {
         self.limits
+    }
+
+    /// Artifact store used for read-only engine loading during doctor and serve.
+    #[must_use]
+    pub fn artifact_root(&self) -> &Path {
+        &self.artifact_root
     }
 
     /// Privacy-safe configuration validation report.
     #[must_use]
-    pub fn doctor_report(self) -> DoctorReport {
+    pub fn doctor_report(&self) -> DoctorReport {
         DoctorReport {
             status: "ok",
             bind_scope: "loopback",
@@ -220,6 +232,7 @@ impl ServerOptions {
         let environment = read_environment(environment)?;
         let cli = PartialConfig {
             bind: self.bind,
+            artifact_root: self.artifact_root.clone(),
             max_request_bytes: self.max_request_bytes,
             queue_capacity: self.queue_capacity,
             max_concurrent_requests: self.max_concurrent_requests,
@@ -243,6 +256,9 @@ fn read_file(path: &Path) -> Result<PartialConfig, ConfigError> {
 
 fn read_environment<E: Environment>(environment: &E) -> Result<PartialConfig, ConfigError> {
     Ok(PartialConfig {
+        artifact_root: environment
+            .get("IMPOSSIBLE_VOICE_ARTIFACT_ROOT")
+            .map(PathBuf::from),
         bind: parse_environment(environment, "IMPOSSIBLE_VOICE_BIND", "bind")?,
         max_request_bytes: parse_environment(
             environment,
@@ -291,6 +307,12 @@ fn parse_environment<T: std::str::FromStr, E: Environment>(
 
 fn resolve_layers(values: PartialConfig) -> Result<RuntimeConfig, ConfigError> {
     let bind = values.bind.unwrap_or(DEFAULT_BIND);
+    let artifact_root = values
+        .artifact_root
+        .unwrap_or_else(|| PathBuf::from("runtime-artifacts"));
+    if artifact_root.as_os_str().is_empty() {
+        return Err(ConfigError::new("artifact_root", "is malformed"));
+    }
     if !bind.ip().is_loopback() {
         return Err(ConfigError::new("bind", "must be loopback"));
     }
@@ -302,7 +324,11 @@ fn resolve_layers(values: PartialConfig) -> Result<RuntimeConfig, ConfigError> {
         Duration::from_millis(values.shutdown_timeout_ms.unwrap_or(10_000)),
     )
     .map_err(|error| ConfigError::new(error.field(), "is outside the supported bound"))?;
-    Ok(RuntimeConfig { bind, limits })
+    Ok(RuntimeConfig {
+        bind,
+        limits,
+        artifact_root,
+    })
 }
 
 #[cfg(test)]

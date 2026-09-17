@@ -1,6 +1,7 @@
 //! Impossible Voice control plane and bounded workload host.
 
 pub mod config;
+pub mod engines;
 
 use std::{
     future::{Future, IntoFuture, poll_fn},
@@ -105,6 +106,52 @@ impl Workload for PlaceholderWorkload {
                         error: PublicErrorBody {
                             code: "not_implemented",
                             message: "replace PlaceholderWorkload with a service implementation",
+                        },
+                    }),
+                )
+            }),
+        )
+    }
+}
+
+/// Loaded engine workload used until public modality transports are installed.
+#[derive(Debug)]
+pub struct VoiceEngineWorkload {
+    engines: Option<engines::VoiceEngines>,
+}
+
+impl VoiceEngineWorkload {
+    /// Creates a ready workload around fully loaded STT and TTS engines.
+    #[must_use]
+    pub const fn new(engines: engines::VoiceEngines) -> Self {
+        Self {
+            engines: Some(engines),
+        }
+    }
+
+    /// Creates a live but unready workload when verified engines cannot be loaded.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self { engines: None }
+    }
+}
+
+impl Workload for VoiceEngineWorkload {
+    fn component_name(&self) -> &'static str {
+        "voice_engines"
+    }
+
+    fn routes(&self, context: WorkloadContext) -> Router {
+        context.set_ready(self.engines.is_some());
+        Router::new().route(
+            "/workload",
+            get(|| async {
+                (
+                    StatusCode::NOT_IMPLEMENTED,
+                    Json(ErrorEnvelope {
+                        error: PublicErrorBody {
+                            code: "not_implemented",
+                            message: "public voice transports are not installed yet",
                         },
                     }),
                 )

@@ -14,6 +14,10 @@ axum.workspace = true
 clap.workspace = true
 impossible-server-core.workspace = true
 impossible-voice-artifacts.workspace = true
+impossible-voice-audio.workspace = true
+impossible-voice-sherpa-sys.workspace = true
+impossible-voice-stt = { version = "=0.1.0", path = "../impossible-voice-stt" }
+impossible-voice-tts = { version = "=0.1.0", path = "../impossible-voice-tts" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
@@ -23,6 +27,7 @@ toml.workspace = true
 http-body-util.workspace = true
 impossible-server-testkit.workspace = true
 tower.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
