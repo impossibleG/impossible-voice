@@ -19,7 +19,7 @@ rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-axum = { version = "=0.8.6", features = ["http1", "json", "tokio"] }
+axum = { version = "=0.8.6", features = ["http1", "json", "multipart", "tokio", "ws"] }
 bzip2 = "=0.6.1"
 clap = { version = "=4.5.50", features = ["derive"] }
 fs2 = "=0.4.3"
@@ -38,6 +38,7 @@ sha2 = "=0.10.9"
 tar = "=0.4.46"
 tempfile = "=3.23.0"
 tokio = "=1.48.0"
+tokio-tungstenite = "=0.28.0"
 toml = "=0.9.8"
 tower = { version = "=0.5.2", features = ["util"] }
 

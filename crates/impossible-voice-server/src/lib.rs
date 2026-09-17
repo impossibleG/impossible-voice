@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod engines;
+pub mod voice_api;
 
 use std::{
     future::{Future, IntoFuture, poll_fn},
@@ -115,24 +116,40 @@ impl Workload for PlaceholderWorkload {
 }
 
 /// Loaded engine workload used until public modality transports are installed.
-#[derive(Debug)]
 pub struct VoiceEngineWorkload {
-    engines: Option<engines::VoiceEngines>,
+    backend: Option<Arc<dyn voice_api::VoiceBackend>>,
+}
+
+impl std::fmt::Debug for VoiceEngineWorkload {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VoiceEngineWorkload")
+            .field("ready", &self.backend.is_some())
+            .finish()
+    }
 }
 
 impl VoiceEngineWorkload {
     /// Creates a ready workload around fully loaded STT and TTS engines.
     #[must_use]
-    pub const fn new(engines: engines::VoiceEngines) -> Self {
+    pub fn new(engines: engines::VoiceEngines) -> Self {
         Self {
-            engines: Some(engines),
+            backend: Some(Arc::new(engines)),
+        }
+    }
+
+    /// Creates a workload around another local backend, primarily for embedding and contract tests.
+    #[must_use]
+    pub fn with_backend(backend: Arc<dyn voice_api::VoiceBackend>) -> Self {
+        Self {
+            backend: Some(backend),
         }
     }
 
     /// Creates a live but unready workload when verified engines cannot be loaded.
     #[must_use]
     pub const fn unavailable() -> Self {
-        Self { engines: None }
+        Self { backend: None }
     }
 }
 
@@ -142,20 +159,25 @@ impl Workload for VoiceEngineWorkload {
     }
 
     fn routes(&self, context: WorkloadContext) -> Router {
-        context.set_ready(self.engines.is_some());
-        Router::new().route(
-            "/workload",
-            get(|| async {
-                (
-                    StatusCode::NOT_IMPLEMENTED,
-                    Json(ErrorEnvelope {
-                        error: PublicErrorBody {
-                            code: "not_implemented",
-                            message: "public voice transports are not installed yet",
-                        },
+        context.set_ready(self.backend.is_some());
+        self.backend.as_ref().map_or_else(
+            || {
+                Router::new().route(
+                    "/workload",
+                    get(|| async {
+                        (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(ErrorEnvelope {
+                                error: PublicErrorBody {
+                                    code: "engine_unavailable",
+                                    message: "local voice engines are unavailable",
+                                },
+                            }),
+                        )
                     }),
                 )
-            }),
+            },
+            |backend| voice_api::routes(Arc::clone(backend), context.limits()),
         )
     }
 }
@@ -536,9 +558,9 @@ async fn version(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
 async fn capabilities(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     state.metrics.increment();
     Json(serde_json::json!({
-        "speech_to_text": false,
-        "text_to_speech": false,
-        "realtime_websocket": false,
+        "speech_to_text": true,
+        "text_to_speech": true,
+        "realtime_websocket": true,
         "grpc": false,
         "mcp": false,
         "offline_after_setup": true
@@ -547,7 +569,13 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<serde_json::Va
 
 async fn models(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     state.metrics.increment();
-    Json(serde_json::json!({ "object": "list", "data": [] }))
+    Json(serde_json::json!({
+        "object": "list",
+        "data": [
+            { "id": "impossible-voice-stt", "object": "model", "owned_by": "local" },
+            { "id": "impossible-voice-tts", "object": "model", "owned_by": "local", "voice": "kristin" }
+        ]
+    }))
 }
 
 async fn live(State(state): State<Arc<AppState>>) -> Response {

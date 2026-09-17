@@ -9,6 +9,8 @@ use impossible_voice_stt::{SttEngine, SttLimits};
 use impossible_voice_tts::{TtsEngine, TtsLimits};
 use serde::Serialize;
 
+use crate::voice_api::{RealtimeTranscriber, VoiceBackend, VoiceBackendError, map_tts_error};
+
 /// Sanitized engine composition failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineLoadError(&'static str);
@@ -110,6 +112,56 @@ impl VoiceEngines {
     #[must_use]
     pub const fn tts(&self) -> &TtsEngine {
         &self.tts
+    }
+}
+
+impl VoiceBackend for VoiceEngines {
+    fn transcribe(
+        &self,
+        audio: &impossible_voice_audio::MonoPcm,
+        context: &impossible_server_core::RequestContext,
+    ) -> Result<String, VoiceBackendError> {
+        self.stt.transcribe(audio, context).map_err(|error| {
+            use impossible_voice_stt::SttError;
+            match error {
+                SttError::InvalidInput | SttError::Audio => VoiceBackendError::InvalidInput,
+                SttError::Busy => VoiceBackendError::Busy,
+                SttError::Cancelled => VoiceBackendError::Cancelled,
+                SttError::DeadlineExceeded => VoiceBackendError::DeadlineExceeded,
+                SttError::Engine => VoiceBackendError::Engine,
+            }
+        })
+    }
+
+    fn synthesize(
+        &self,
+        text: &str,
+        speed: f32,
+        context: &impossible_server_core::RequestContext,
+    ) -> Result<impossible_voice_tts::Synthesis, VoiceBackendError> {
+        self.tts
+            .synthesize(text, speed, context)
+            .map_err(map_tts_error)
+    }
+
+    fn start_transcription(
+        &self,
+        sample_rate: u32,
+        context: impossible_server_core::RequestContext,
+    ) -> Result<Box<dyn RealtimeTranscriber>, VoiceBackendError> {
+        self.stt
+            .start_stream(sample_rate, context)
+            .map(|session| Box::new(session) as Box<dyn RealtimeTranscriber>)
+            .map_err(|error| {
+                use impossible_voice_stt::SttError;
+                match error {
+                    SttError::InvalidInput | SttError::Audio => VoiceBackendError::InvalidInput,
+                    SttError::Busy => VoiceBackendError::Busy,
+                    SttError::Cancelled => VoiceBackendError::Cancelled,
+                    SttError::DeadlineExceeded => VoiceBackendError::DeadlineExceeded,
+                    SttError::Engine => VoiceBackendError::Engine,
+                }
+            })
     }
 }
 

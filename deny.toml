@@ -32,6 +32,8 @@ wildcards = "deny"
 highlight = "all"
 deny = []
 skip = [
+    # rustls/ring uses getrandom 0.2 while current WebSocket and test utilities use 0.3.
+    { name = "getrandom", version = "=0.3.4" },
     # displaydoc/futures-macro use syn 3 while the remaining proc-macro graph uses syn 2.
     { name = "syn", version = "=3.0.6" },
     # The two ICU derive generations independently require these adjacent synstructure releases.

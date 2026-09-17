@@ -138,6 +138,22 @@ pub struct Synthesis {
 }
 
 impl Synthesis {
+    /// Creates a completed synthesis result from validated mono PCM.
+    ///
+    /// This constructor supports alternate local backends and deterministic transport tests.
+    ///
+    /// # Errors
+    /// Rejects a zero transport chunk bound.
+    pub fn from_audio(audio: MonoPcm, max_chunk_samples: usize) -> Result<Self, TtsError> {
+        if max_chunk_samples == 0 {
+            return Err(TtsError::InvalidInput);
+        }
+        Ok(Self {
+            audio,
+            max_chunk_samples,
+        })
+    }
+
     /// Validated synthesized mono PCM.
     #[must_use]
     pub const fn audio(&self) -> &MonoPcm {
