@@ -12,6 +12,10 @@ The public v0.1 promise is frozen in [`docs/product-contract.md`](docs/product-c
 realtime WebSocket, gRPC, and bounded MCP transports are implemented. Native Windows and Linux
 archives are built by the release workflow; a prebuilt Linux container is not published in v0.1.
 
+<p align="center">
+  <img src="docs/assets/impossible-voice-scene.gif" alt="A moving waveform representing local speech recognition and synthesis" width="100%">
+</p>
+
 From a source checkout, install the pinned local artifacts with one command, then start the server
 with one command.
 
