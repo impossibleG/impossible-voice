@@ -53,6 +53,11 @@ The server emits `session_ready`, `transcript_interim`, `transcript_final`, and
 `session_completed`. VAD can emit finals before explicit commit. `ping`, `cancel`, and `close` are
 also supported. Wrong ordering emits an `error` event and closes the session.
 
+Every failure emits an `error` event with a stable `code` before the close frame. Protocol and
+input errors close with 1002. Engine overload (`overloaded`) closes with 1013, so clients can retry
+later. Local engine failures (`engine_error`) close with 1011, and an exhausted session deadline
+closes with 1008.
+
 TTS sequence:
 
 ```json

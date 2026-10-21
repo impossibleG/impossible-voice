@@ -493,6 +493,7 @@ struct SessionState {
     pending_audio: Option<usize>,
     transcriber: Option<Box<dyn RealtimeTranscriber>>,
     completed: bool,
+    failure: Option<VoiceBackendError>,
 }
 
 async fn websocket_session(
@@ -508,6 +509,7 @@ async fn websocket_session(
         pending_audio: None,
         transcriber: None,
         completed: false,
+        failure: None,
     };
     let outcome = tokio::time::timeout(
         Duration::from_secs(MAX_WS_SESSION_SECONDS),
@@ -519,7 +521,12 @@ async fn websocket_session(
         let _ = send_error(&mut socket, session_id, "deadline_exceeded").await;
         (1008, "session deadline exceeded")
     } else if matches!(outcome, Ok(Err(()))) {
-        (1002, "protocol error")
+        match session.failure {
+            Some(VoiceBackendError::Busy) => (1013, "voice capacity is busy"),
+            Some(VoiceBackendError::DeadlineExceeded) => (1008, "session deadline exceeded"),
+            Some(VoiceBackendError::Engine) => (1011, "voice engine failed"),
+            _ => (1002, "protocol error"),
+        }
     } else {
         (1000, "session closed")
     };
@@ -566,7 +573,12 @@ async fn websocket_loop(
                     send_error(socket, context.id().get(), "stt_session_required").await?;
                     return Err(());
                 };
-                let updates = transcriber.push_pcm16(&bytes).map_err(|_| ())?;
+                let updates = match transcriber.push_pcm16(&bytes) {
+                    Ok(updates) => updates,
+                    Err(error) => {
+                        return fail_backend(socket, session, context.id().get(), error).await;
+                    }
+                };
                 for update in updates {
                     send_transcript(socket, context.id().get(), &update).await?;
                 }
@@ -592,13 +604,14 @@ async fn handle_client_event(
         ClientEvent::SessionStart { mode, sample_rate } if session.mode.is_none() => {
             session.mode = Some(mode);
             if mode == SessionMode::Stt {
-                let rate = sample_rate.ok_or(())?;
-                session.transcriber = Some(
-                    state
-                        .backend
-                        .start_transcription(rate, context.clone())
-                        .map_err(|_| ())?,
-                );
+                let Some(rate) = sample_rate else {
+                    send_error(socket, session_id, "sample_rate_required").await?;
+                    return Err(());
+                };
+                match state.backend.start_transcription(rate, context.clone()) {
+                    Ok(transcriber) => session.transcriber = Some(transcriber),
+                    Err(error) => return fail_backend(socket, session, session_id, error).await,
+                }
             } else if sample_rate.is_some() {
                 send_error(socket, session_id, "sample_rate_not_allowed").await?;
                 return Err(());
@@ -626,8 +639,14 @@ async fn handle_client_event(
         ClientEvent::AudioCommit
             if session.mode == Some(SessionMode::Stt) && !session.completed =>
         {
-            let transcriber = session.transcriber.take().ok_or(())?;
-            let update = transcriber.finish().map_err(|_| ())?;
+            let Some(transcriber) = session.transcriber.take() else {
+                send_error(socket, session_id, "invalid_sequence").await?;
+                return Err(());
+            };
+            let update = match transcriber.finish() {
+                Ok(update) => update,
+                Err(error) => return fail_backend(socket, session, session_id, error).await,
+            };
             send_transcript(socket, session_id, &update).await?;
             session.completed = true;
             send_event(
@@ -653,7 +672,12 @@ async fn handle_client_event(
             let synthesis = loop {
                 tokio::select! {
                     result = &mut worker => {
-                        break result.map_err(|_| ())?.map_err(|_| ())?;
+                        match result.unwrap_or(Err(VoiceBackendError::Engine)) {
+                            Ok(synthesis) => break synthesis,
+                            Err(error) => {
+                                return fail_backend(socket, session, session_id, error).await;
+                            }
+                        }
                     }
                     incoming = socket.recv() => {
                         match incoming {
@@ -765,6 +789,18 @@ async fn handle_client_event(
         }
     }
     Ok(false)
+}
+
+/// Reports a backend failure as a stable `error` event before the session closes.
+async fn fail_backend<T>(
+    socket: &mut WebSocket,
+    session: &mut SessionState,
+    session_id: u64,
+    error: VoiceBackendError,
+) -> Result<T, ()> {
+    session.failure = Some(error);
+    send_error(socket, session_id, ApiError::from(error).code).await?;
+    Err(())
 }
 
 async fn send_transcript(
@@ -879,6 +915,9 @@ mod tests {
                 }
                 return Err(VoiceBackendError::Cancelled);
             }
+            if text == "engine-failure" {
+                return Err(VoiceBackendError::Engine);
+            }
             let audio = MonoPcm::new(22_050, vec![0.0, 0.25, -0.25, 0.0])
                 .map_err(|_| VoiceBackendError::Engine)?;
             Synthesis::from_audio(audio, 2).map_err(|_| VoiceBackendError::Engine)
@@ -886,9 +925,13 @@ mod tests {
 
         fn start_transcription(
             &self,
-            _sample_rate: u32,
+            sample_rate: u32,
             _context: impossible_server_core::RequestContext,
         ) -> Result<Box<dyn RealtimeTranscriber>, VoiceBackendError> {
+            // 8 kHz stands in for an STT engine whose sessions are all occupied.
+            if sample_rate == 8_000 {
+                return Err(VoiceBackendError::Busy);
+            }
             Ok(Box::new(FakeTranscriber { bytes: 0 }))
         }
     }
@@ -1077,6 +1120,51 @@ mod tests {
         let cancelled =
             tokio::time::timeout(Duration::from_millis(500), next_text(&mut socket)).await??;
         assert!(cancelled.contains("cancelled"));
+        stop_server(shutdown, task).await
+    }
+
+    #[tokio::test]
+    async fn realtime_backend_failures_emit_error_events_and_close_codes()
+    -> Result<(), Box<dyn Error>> {
+        use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+
+        let (address, shutdown, task) = start_server().await?;
+        let cases = [
+            (
+                r#"{"type":"session_start","mode":"stt"}"#,
+                None,
+                "sample_rate_required",
+                CloseCode::Protocol,
+            ),
+            (
+                r#"{"type":"session_start","mode":"stt","sample_rate":8000}"#,
+                None,
+                "overloaded",
+                CloseCode::Again,
+            ),
+            (
+                r#"{"type":"session_start","mode":"tts","sample_rate":null}"#,
+                Some(r#"{"type":"speech_generate","input":"engine-failure"}"#),
+                "engine_error",
+                CloseCode::Error,
+            ),
+        ];
+        for (start, follow_up, code, close_code) in cases {
+            let (mut socket, _) = connect_async(format!("ws://{address}/api/v1/realtime")).await?;
+            socket.send(ClientMessage::Text(start.into())).await?;
+            if let Some(follow_up) = follow_up {
+                assert!(next_text(&mut socket).await?.contains("session_ready"));
+                socket.send(ClientMessage::Text(follow_up.into())).await?;
+            }
+            let error: Value = serde_json::from_str(&next_text(&mut socket).await?)?;
+            assert_eq!(error["type"], "error");
+            assert_eq!(error["code"], code);
+            let close = socket.next().await.ok_or("missing close")??;
+            assert!(
+                matches!(&close, ClientMessage::Close(Some(frame)) if frame.code == close_code),
+                "unexpected close for {code}: {close:?}"
+            );
+        }
         stop_server(shutdown, task).await
     }
 
