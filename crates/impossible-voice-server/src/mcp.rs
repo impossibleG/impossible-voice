@@ -13,7 +13,7 @@ use axum::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use impossible_server_core::RequestContext;
 use impossible_voice_audio::{AudioLimits, MonoPcm};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::IgnoredAny};
 use serde_json::{Value, json};
 
 use crate::voice_api::{VoiceBackend, VoiceBackendError};
@@ -170,6 +170,9 @@ struct ToolCall {
     name: String,
     #[serde(default)]
     arguments: Value,
+    /// MCP reserves `params._meta` on every request (for example `progressToken`).
+    #[serde(default, rename = "_meta")]
+    _meta: Option<IgnoredAny>,
 }
 
 async fn call_tool(
@@ -313,6 +316,9 @@ fn resources() -> Value {
 #[serde(deny_unknown_fields)]
 struct ReadResource {
     uri: String,
+    /// MCP reserves `params._meta` on every request (for example `progressToken`).
+    #[serde(default, rename = "_meta")]
+    _meta: Option<IgnoredAny>,
 }
 
 fn read_resource(params: Value) -> Result<Value, RpcFailure> {
@@ -596,6 +602,41 @@ mod tests {
         assert_eq!(malformed.status(), StatusCode::OK);
         let malformed: Value = serde_json::from_slice(&malformed.bytes().await?)?;
         assert_eq!(malformed["error"]["code"], -32_700);
+
+        let _ = shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(2), task).await???;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn real_mcp_network_accepts_reserved_meta_params() -> Result<(), Box<dyn Error>> {
+        let (endpoint, shutdown, task) = start_server().await?;
+        let client = Client::new();
+        let with_meta = call(
+            &client,
+            &endpoint,
+            rpc(
+                8,
+                "tools/call",
+                json!({ "name": "health", "arguments": {}, "_meta": { "progressToken": "p-1" } }),
+            ),
+        )
+        .await?;
+        assert_eq!(
+            with_meta["result"]["content"][0]["text"],
+            "{\"status\":\"ready\"}"
+        );
+        let resource_with_meta = call(
+            &client,
+            &endpoint,
+            rpc(
+                9,
+                "resources/read",
+                json!({ "uri": "voice://status", "_meta": { "progressToken": 9 } }),
+            ),
+        )
+        .await?;
+        assert!(resource_with_meta["error"].is_null());
 
         let _ = shutdown.cancel();
         tokio::time::timeout(Duration::from_secs(2), task).await???;
