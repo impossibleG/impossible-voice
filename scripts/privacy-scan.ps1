@@ -16,6 +16,8 @@ $credentialPatterns = @(
 $safeValue = '(?i)^(?:\$\{[A-Z_][A-Z0-9_]*\}|\$env:[A-Z_][A-Z0-9_]*|<[^>]+>|example|placeholder|dummy|fixture|test|test[-_]?placeholder|change[-_]?me|none|null|redacted|not[-_]?set|x{3,})$'
 $approvedBinaryHashes = @{
     'docs/assets/impossible-voice-header.png' = 'a75515ffbe2dbbb90800b723c8db65ec1f4b5c17fcc63225bafa79f655fdad80'
+    'docs/assets/impossible-voice-scene.gif' = 'c5ec70a8a8f01a23d3d9238309c98ad549bc4c3402d34923f1a10de0456d0fb4'
+    'docs/assets/social-preview.png' = '6c0449a3f2eb39b22e3f55b22bc462cbeb9408f8eb69e7b0ca0ceac81cac4481'
 }
 
 Push-Location $repoRoot
@@ -98,6 +100,9 @@ try {
         exit 1
     }
     Write-Output "Privacy scan passed for $($files.Count) tracked and nonignored untracked candidates."
+    # An unset user.name or user.email leaves `git config --get` exit code 1 in $LASTEXITCODE,
+    # which hosts such as GitHub Actions would otherwise report as a failed scan.
+    exit 0
 } finally {
     Pop-Location
 }
