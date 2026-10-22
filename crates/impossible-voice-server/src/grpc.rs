@@ -160,18 +160,24 @@ impl Voice for GrpcVoice {
                         if session.is_some() && !committed =>
                     {
                         committed = true;
-                        session
+                        match session
                             .take()
                             .ok_or(VoiceBackendError::InvalidInput)
                             .and_then(RealtimeTranscriber::finish)
-                            .and_then(|final_result| {
-                                sender
-                                    .try_send(Ok(TranscriptEvent {
+                        {
+                            Ok(final_result) => {
+                                // Wait for queue capacity like interim updates do; the final
+                                // result must not be dropped because the client reads slowly.
+                                let _ = sender
+                                    .send(Ok(TranscriptEvent {
                                         text: final_result.text,
                                         r#final: true,
                                     }))
-                                    .map_err(|_| VoiceBackendError::Busy)
-                            })
+                                    .await;
+                                return;
+                            }
+                            Err(error) => Err(error),
+                        }
                     }
                     Some(stream_transcribe_request::Event::Cancel(true)) => {
                         let _ = context.cancellation().cancel();
@@ -406,7 +412,9 @@ mod tests {
     use tonic::Request;
     use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
 
-    use super::{GrpcVoice, RealtimeTranscriber, VoiceBackend, VoiceBackendError, serve};
+    use super::{
+        GrpcVoice, OUTPUT_QUEUE, RealtimeTranscriber, VoiceBackend, VoiceBackendError, serve,
+    };
 
     struct FakeBackend;
 
@@ -590,6 +598,98 @@ mod tests {
                 .status,
             1
         );
+        let _ = shutdown.cancel();
+        let server_result = server.await?;
+        assert!(server_result.is_ok());
+        Ok(())
+    }
+
+    struct BurstBackend;
+
+    impl VoiceBackend for BurstBackend {
+        fn transcribe(
+            &self,
+            _audio: &MonoPcm,
+            _context: &RequestContext,
+        ) -> Result<String, VoiceBackendError> {
+            Err(VoiceBackendError::InvalidInput)
+        }
+
+        fn synthesize(
+            &self,
+            _text: &str,
+            _speed: f32,
+            _context: &RequestContext,
+        ) -> Result<Synthesis, VoiceBackendError> {
+            Err(VoiceBackendError::InvalidInput)
+        }
+
+        fn start_transcription(
+            &self,
+            _sample_rate: u32,
+            _context: RequestContext,
+        ) -> Result<Box<dyn RealtimeTranscriber>, VoiceBackendError> {
+            Ok(Box::new(BurstStream))
+        }
+    }
+
+    /// Emits a multiple of the output queue size so the queue is full when commit arrives.
+    struct BurstStream;
+
+    impl RealtimeTranscriber for BurstStream {
+        fn push_pcm16(&mut self, _bytes: &[u8]) -> Result<Vec<Transcript>, VoiceBackendError> {
+            Ok((0..OUTPUT_QUEUE * 4)
+                .map(|index| Transcript {
+                    kind: TranscriptKind::Interim,
+                    text: format!("partial-{index}"),
+                })
+                .collect())
+        }
+
+        fn finish(self: Box<Self>) -> Result<Transcript, VoiceBackendError> {
+            Ok(Transcript {
+                kind: TranscriptKind::Final,
+                text: "final".to_owned(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_final_transcript_waits_for_a_full_output_queue() -> Result<(), Box<dyn Error>> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let address = listener.local_addr()?;
+        let shutdown = CancellationToken::new();
+        let server_shutdown = shutdown.clone();
+        let server = tokio::spawn(async move {
+            serve(
+                listener,
+                Arc::new(BurstBackend),
+                Duration::from_secs(5),
+                Duration::from_secs(2),
+                server_shutdown,
+            )
+            .await
+        });
+        let mut client = VoiceClient::connect(format!("http://{address}")).await?;
+        let events = vec![
+            stream_event(stream_transcribe_request::Event::Config(StreamConfig {
+                sample_rate: 16_000,
+            })),
+            stream_event(stream_transcribe_request::Event::Audio(vec![0_u8; 4])),
+            stream_event(stream_transcribe_request::Event::Commit(true)),
+        ];
+        let mut transcripts = client.stream_transcribe(iter(events)).await?.into_inner();
+        let mut interim = 0;
+        let final_text = loop {
+            let event = transcripts.message().await?.ok_or("missing final")?;
+            if event.r#final {
+                break event.text;
+            }
+            interim += 1;
+        };
+        assert_eq!(interim, OUTPUT_QUEUE * 4);
+        assert_eq!(final_text, "final");
+        assert!(transcripts.message().await?.is_none());
         let _ = shutdown.cancel();
         let server_result = server.await?;
         assert!(server_result.is_ok());
